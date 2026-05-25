@@ -26,17 +26,17 @@ class SELQIETerminal(Cmd):
         return True
     
     def do_idle(self, line : str):
-        """ Idle the ODrive motors """
+        """ Idle the Cubemars motors """
         for i in range(self._selqie.NUM_MOTORS):
             self._selqie.set_motor_idle(i)
 
     def do_ready(self, line : str):
-        """ Ready the ODrive motors """
+        """ Ready the Cubemars motors """
         for i in range(self._selqie.NUM_MOTORS):
             self._selqie.set_motor_ready(i)
 
     def do_clear_errors(self, line : str):
-        """ Clear errors on the ODrive motors """
+        """ Clear errors on the Cubemars motors """
         for i in range(self._selqie.NUM_MOTORS):
             self._selqie.set_motor_clear_errors(i)
 
@@ -119,7 +119,7 @@ class SELQIETerminal(Cmd):
             return
         try:
             for i in range(0, len(args), 3):
-                file = args[0]
+                file = args[i]
                 num_loops = int(args[i+1])
                 frequency = float(args[i+2])
                 rate = self._selqie.create_rate(frequency)
@@ -144,13 +144,12 @@ class SELQIETerminal(Cmd):
     def do_print_motor_info(self, line : str):
         """ Print motor info """
         for i in range(self._selqie.NUM_MOTORS):
+            state = self._selqie.get_motor_estimate(i)
+            err = self._selqie.get_motor_info(i)
             print(f"Motor {i}:")
-            for attr in ["pos_estimate", "vel_estimate", "torq_estimate"]:
-                print(f"  {attr}: {getattr(self._selqie.get_motor_estimate(i), attr)}")
-            for attr in ["axis_error", "axis_state", "bus_current", 
-                 "bus_voltage", "fet_temperature", "motor_temperature",
-                 "iq_measured", "iq_setpoint"]:
-                print(f"  {attr}: {getattr(self._selqie.get_motor_info(i), attr)}")
+            for attr in ["position", "abs_position", "velocity", "torque", "current", "temperature"]:
+                print(f"  {attr}: {getattr(state, attr)}")
+            print(f"  error: {err.data}")
 
     def do_print_leg_info(self, line : str):
         """ Print leg info """
@@ -164,9 +163,10 @@ class SELQIETerminal(Cmd):
         """ Print all motor errors """
         iserr = False
         for i in range(self._selqie.NUM_MOTORS):
-            if self._selqie.get_motor_info(i).axis_error != 0:
+            err = self._selqie.get_motor_error_name(i)
+            if err and "No fault" not in err:
                 iserr = True
-                print(f"Error on Motor {i}: " + self._selqie.get_motor_error_name(i))
+                print(f"Error on Motor {i}: {err}")
         if not iserr:
             print("No errors on all motors")
 
