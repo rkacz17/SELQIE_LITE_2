@@ -9,11 +9,13 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy
 from ament_index_python.packages import get_package_share_directory
 
-from std_msgs.msg import Empty, String, Float32
+from std_msgs.msg import Empty, Float32
 from geometry_msgs.msg import Twist, PoseStamped, PoseWithCovarianceStamped, Quaternion
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Image, Imu
-from actuation_msgs.msg import *
+from std_msgs.msg import String
+from std_msgs.msg import Float64MultiArray
+from motor_interfaces.msg import MotorState
 from leg_control_msgs.msg import *
 from robot_localization.srv import SetPose
 
@@ -79,27 +81,30 @@ class SELQIE(Node):
     def init_motors(self):
         """Initialize the motor publishers and subscribers."""
         self.NUM_MOTORS = 8
-        self.DEFAULT_MOTOR_GAINS = [50.0, 0.025, 0.05]
+        self.DEFAULT_MOTOR_GAINS = [50.0, 0.05]
 
-        self._motor_command_publishers = []
-        for i in range(self.NUM_MOTORS):
-            self._motor_command_publishers.append(self.create_publisher(MotorCommand, f'motor{i}/command', QOS_RELIABLE()))
+        self._motor_cmd_publishers = []
+        self._motor_special_publishers = []
+        self._motor_states = [MotorState() for _ in range(self.NUM_MOTORS)]
+        self._motor_errors = [String() for _ in range(self.NUM_MOTORS)]
 
-        self._motor_config_publishers = []
         for i in range(self.NUM_MOTORS):
-            self._motor_config_publishers.append(self.create_publisher(MotorConfig, f'motor{i}/config', QOS_RELIABLE()))
+            self._motor_cmd_publishers.append(
+                self.create_publisher(Float64MultiArray, f'/motor{i}/mit_cmd', QOS_RELIABLE())
+            )
+            self._motor_special_publishers.append(
+                self.create_publisher(String, f'/motor{i}/special_cmd', QOS_RELIABLE())
+            )
 
-        self._motor_estimates = [MotorEstimate() for _ in range(self.NUM_MOTORS)]
-        self._motor_estimate_subscribers = []
-        for i in range(self.NUM_MOTORS):
-            motor_estimate_callback = lambda msg, i=i: self._motor_estimates.__setitem__(i, msg)
-            self._motor_estimate_subscribers.append(self.create_subscription(MotorEstimate, f'motor{i}/estimate', motor_estimate_callback, QOS_FAST()))
+            motor_state_callback = lambda msg, i=i: self._motor_states.__setitem__(i, msg)
+            self.create_subscription(
+                MotorState, f'/motor{i}/motor_state', motor_state_callback, QOS_FAST()
+            )
 
-        self._motor_infos = [MotorInfo() for _ in range(self.NUM_MOTORS)]
-        self._motor_info_subscribers = []
-        for i in range(self.NUM_MOTORS):
-            motor_info_callback = lambda msg, i=i: self._motor_infos.__setitem__(i, msg)
-            self._motor_info_subscribers.append(self.create_subscription(MotorInfo, f'motor{i}/info', motor_info_callback, QOS_FAST()))
+            motor_error_callback = lambda msg, i=i: self._motor_errors.__setitem__(i, msg)
+            self.create_subscription(
+                String, f'/motor{i}/error_code', motor_error_callback, QOS_FAST()
+            )
 
     def init_legs(self):
         """Initialize the leg publishers and subscribers."""
@@ -215,79 +220,62 @@ class SELQIE(Node):
     ### Motor Functions ###
     #######################
 
-    def send_motor_config(self, motor_idx : int, config : MotorConfig):
-        """Send an MotorConfig message to the motor."""
+    def send_motor_special_command(self, motor_idx : int, command : str):
+        """Send a special command string to a motor."""
         if motor_idx < 0 or motor_idx >= self.NUM_MOTORS:
             raise ValueError(f"Motor index {motor_idx} out of range")
-        self._motor_config_publishers[motor_idx].publish(config)
-
-    def set_motor_state(self, motor_idx : int, state : int):
-        """Set the state of the motor."""
-        config = MotorConfig()
-        config.axis_state = state
-        self.send_motor_config(motor_idx, config)
+        msg = String()
+        msg.data = command
+        self._motor_special_publishers[motor_idx].publish(msg)
 
     def set_motor_idle(self, motor_idx : int):
-        """Set the motor to AXIS_STATE_IDLE."""
-        self.set_motor_state(motor_idx, MotorConfig.AXIS_STATE_IDLE)
-    
+        """Place motor in idle mode."""
+        self.send_motor_special_command(motor_idx, 'exit')
+
     def set_motor_ready(self, motor_idx : int):
-        """Set the motor to AXIS_STATE_CLOSED_LOOP_CONTROL."""
-        self.set_motor_state(motor_idx, MotorConfig.AXIS_STATE_CLOSED_LOOP_CONTROL)
+        """Place motor in active MIT mode."""
+        self.send_motor_special_command(motor_idx, 'start')
 
     def set_motor_clear_errors(self, motor_idx : int):
-        """Clear the errors on the motor."""
-        config = MotorConfig()
-        config.clear_errors = True
-        self.send_motor_config(motor_idx, config)
-    
-    def set_motor_gains(self, motor_idx : int, p_gain : float, v_gain : float, v_int_gain : float):
-        """Set the gains on the motor."""
-        config = MotorConfig()
-        config.pos_gain = p_gain
-        config.vel_gain = v_gain
-        config.vel_int_gain = v_int_gain
-        self.send_motor_config(motor_idx, config)
+        """Clear motor faults and hold neutral command."""
+        self.send_motor_special_command(motor_idx, 'clear')
 
-    def set_motor_gains_default(self, motor_idx : int):
-        """Set the default gains on the motor."""
-        self.set_motor_gains(motor_idx, *self.DEFAULT_MOTOR_GAINS)
-
-    def send_motor_command(self, motor_idx : int, command : MotorCommand):
-        """Send a MotorCommand message to the motor."""
+    def send_motor_command(self, motor_idx : int, position : float, velocity : float, kp : float, kd : float, torque : float):
+        """Send MIT command [position, velocity, kp, kd, torque]."""
         if motor_idx < 0 or motor_idx >= self.NUM_MOTORS:
             raise ValueError(f"Motor index {motor_idx} out of range")
-        self._motor_command_publishers[motor_idx].publish(command)
+        cmd = Float64MultiArray()
+        cmd.data = [float(position), float(velocity), float(kp), float(kd), float(torque)]
+        self._motor_cmd_publishers[motor_idx].publish(cmd)
 
     def set_motor_position(self, motor_idx : int, pos : float):
-        """Set the position of the motor."""
-        command = MotorCommand()
-        command.control_mode = MotorCommand.CONTROL_MODE_POSITION
-        command.pos_setpoint = pos
-        self.send_motor_command(motor_idx, command)
+        """Set motor position with default gains and zero velocity/torque feedforward."""
+        self.send_motor_command(motor_idx, pos, 0.0, self.DEFAULT_MOTOR_GAINS[0], self.DEFAULT_MOTOR_GAINS[1], 0.0)
 
-    def get_motor_info(self, motor_idx : int) -> MotorInfo:
-        """Get the latest MotorInfo message from the motor."""
+    def set_motor_gains(self, motor_idx : int, p_gain : float, v_gain : float, v_int_gain : float | None = None):
+        """Update default MIT gains used by helper position commands."""
+        self.DEFAULT_MOTOR_GAINS = [p_gain, v_gain]
+
+    def set_motor_gains_default(self, motor_idx : int):
+        """Compatibility shim; no per-motor persistent gain command in Cubemars node."""
+        _ = motor_idx
+
+    def get_motor_info(self, motor_idx : int) -> String:
+        """Get the latest motor error/status string message."""
         if motor_idx < 0 or motor_idx >= self.NUM_MOTORS:
             raise ValueError(f"Motor index {motor_idx} out of range")
-        return self._motor_infos[motor_idx]
-    
+        return self._motor_errors[motor_idx]
+
     def get_motor_error_name(self, motor_idx : int) -> str:
-        """Get the name of the error on the motor."""
-        motor_info = self.get_motor_info(motor_idx)
-        for attr_name in dir(MotorInfo):
-            if attr_name.startswith("AXIS_ERROR_"):
-                error_value = getattr(MotorInfo, attr_name)
-                if error_value == motor_info.axis_error:
-                    return attr_name
-        return f"MULTIPLE_ERRORS ({motor_info.axis_error})"
-    
-    def get_motor_estimate(self, motor_idx : int) -> MotorEstimate:
-        """Get the latest MotorEstimate message from the motor."""
+        """Get latest human-readable error text for a motor."""
+        return self.get_motor_info(motor_idx).data
+
+    def get_motor_estimate(self, motor_idx : int) -> MotorState:
+        """Get latest Cubemars MotorState for a motor."""
         if motor_idx < 0 or motor_idx >= self.NUM_MOTORS:
             raise ValueError(f"Motor index {motor_idx} out of range")
-        return self._motor_estimates[motor_idx]
-    
+        return self._motor_states[motor_idx]
+
     #####################
     ### Leg Functions ###
     #####################
