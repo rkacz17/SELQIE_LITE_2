@@ -16,9 +16,12 @@ tmux split-window -v
 tmux select-pane -t 2
 tmux split-window -v
 
+SETUP_CMD="source ${ROS2_WS}/install/setup.bash"
+PYTHON_CAN_CHECK='python3 -c "import can" || { echo "ERROR: Missing python-can. Install it with: sudo apt install python3-can"; exec bash; }'
+
 # Launch SELQIE in top-left
 tmux select-pane -t 0
-tmux send-keys "source ${ROS2_WS}/install/setup.bash; ros2 launch selqie_bringup selqie_hw.launch.py" C-m
+tmux send-keys "${SETUP_CMD}; ${PYTHON_CAN_CHECK}; ros2 launch selqie_bringup selqie_hw.launch.py" C-m
 
 # Sourced environment in bottom-left
 tmux select-pane -t 1
