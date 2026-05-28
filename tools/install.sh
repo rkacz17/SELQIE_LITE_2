@@ -43,7 +43,7 @@ sudo add-apt-repository universe -y
 sudo apt update
 sudo apt install -y  \
     curl wget gpg apt-transport-https gdb tmux \
-    python3-pip python3-smbus \
+    python3-pip python3-smbus python3-can \
     libsocketcan-dev can-utils libeigen3-dev
 if [ "$DEVEL_FLAG" = true ]; then
     # MuJoCo dependencies (Development Only)
