@@ -10,7 +10,10 @@ The node publishes motor state data including position, velocity, torque,
 temperature, and error codes, and subscribes to command topics for motor control.
 """
 
-import threading, can, rclpy
+import threading
+
+import can
+import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Float64MultiArray, String, Int32
 from motor_interfaces.msg import MotorState

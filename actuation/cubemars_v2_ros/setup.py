@@ -11,7 +11,7 @@ setup(
         ('share/' + package_name, ['package.xml']),
         
     ],
-    install_requires=['setuptools'],
+    install_requires=['setuptools', 'python-can'],
     zip_safe=True,
     maintainer='ciscor',
     maintainer_email='ciscor@todo.todo',
