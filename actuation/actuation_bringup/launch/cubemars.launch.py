@@ -21,7 +21,7 @@ def launch_setup(context, *args, **kwargs):
             output='screen',
             parameters=[{
                 'can_interface': interface,
-                'can_id': int(motor_id) + 1,
+                'can_id': int(motor_id),
                 'motor_type': motor_type,
                 'control_hz': float(control_hz),
                 'joint_name': joint_name,
@@ -36,7 +36,7 @@ def generate_launch_description():
         DeclareLaunchArgument('motor_id', default_value='0', description='Motor index (0-7).'),
         DeclareLaunchArgument('interface', default_value='can0', description='CAN interface name.'),
         DeclareLaunchArgument('motor_type', default_value='AK70-10', description='Cubemars motor type.'),
-        DeclareLaunchArgument('control_hz', default_value='20.0', description='Control loop rate in Hz.'),
+        DeclareLaunchArgument('control_hz', default_value='100.0', description='Control loop rate in Hz.'),
         DeclareLaunchArgument('auto_start', default_value='false', description='Start motor automatically.'),
         OpaqueFunction(function=launch_setup),
     ])
