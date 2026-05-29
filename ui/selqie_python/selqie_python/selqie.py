@@ -1,5 +1,6 @@
 import os
 import math
+import time
 from threading import Thread, Event
 import subprocess
 from datetime import datetime
@@ -109,6 +110,7 @@ class SELQIE(Node):
     def init_legs(self):
         """Initialize the leg publishers and subscribers."""
         self.LEG_NAMES = ['FL', 'RL', 'RR', 'FR']
+        self.LEG_MOTOR_INDICES = [(0, 1), (2, 3), (4, 5), (6, 7)]
         self.NUM_LEGS = len(self.LEG_NAMES)
         self.DEFAULT_LEG_POSITION = [0.0, 0.0, -0.18914]
         self.TRAJECTORIES_FOLDER = os.path.join(get_package_share_directory('leg_trajectory_publisher'), 'trajectories')
@@ -318,21 +320,96 @@ class SELQIE(Node):
         """Send a LegTrajectory message to the leg."""
         if leg_idx < 0 or leg_idx >= self.NUM_LEGS:
             raise ValueError(f"Leg index {leg_idx} out of range")
+        self.validate_leg_trajectory(leg_idx, trajectory)
         self._leg_trajectory_publishers[leg_idx].publish(trajectory)
+
+    def _validate_leg_command(self, leg_idx : int, command_idx : int, command : LegCommand):
+        """Validate one LegCommand before it is sent into the leg pipeline."""
+        valid_modes = {
+            LegCommand.CONTROL_MODE_FORCE,
+            LegCommand.CONTROL_MODE_VELOCITY,
+            LegCommand.CONTROL_MODE_POSITION,
+        }
+        if command.control_mode not in valid_modes:
+            raise ValueError(
+                f'Invalid control mode {command.control_mode} for leg {self.LEG_NAMES[leg_idx]} command {command_idx}'
+            )
+
+        for field_name in ('pos_setpoint', 'vel_setpoint', 'force_setpoint'):
+            vector = getattr(command, field_name)
+            for axis in ('x', 'y', 'z'):
+                value = getattr(vector, axis)
+                if not math.isfinite(value):
+                    raise ValueError(
+                        f'Invalid {field_name}.{axis}={value} for leg {self.LEG_NAMES[leg_idx]} command {command_idx}'
+                    )
+
+    def validate_leg_trajectory(self, leg_idx : int, trajectory : LegTrajectory):
+        """Validate timing and LegCommand contents before publishing a trajectory."""
+        if leg_idx < 0 or leg_idx >= self.NUM_LEGS:
+            raise ValueError(f"Leg index {leg_idx} out of range")
+        if len(trajectory.timing) != len(trajectory.commands):
+            raise ValueError(
+                f'Trajectory size mismatch for leg {self.LEG_NAMES[leg_idx]}: '
+                f'{len(trajectory.timing)} timing values, {len(trajectory.commands)} commands'
+            )
+        if not trajectory.timing:
+            raise ValueError(f'Trajectory for leg {self.LEG_NAMES[leg_idx]} is empty')
+
+        last_time = -math.inf
+        for command_idx, command_time in enumerate(trajectory.timing):
+            if not math.isfinite(command_time) or command_time < 0.0:
+                raise ValueError(
+                    f'Invalid timing {command_time} for leg {self.LEG_NAMES[leg_idx]} command {command_idx}'
+                )
+            if command_time < last_time:
+                raise ValueError(f'Trajectory timing for leg {self.LEG_NAMES[leg_idx]} is not sorted')
+            last_time = command_time
+            self._validate_leg_command(leg_idx, command_idx, trajectory.commands[command_idx])
+
+    def _missing_trajectory_pipeline_connections(self, leg_indices : list[int]) -> list[str]:
+        """Return missing ROS graph links from leg trajectory input through motor MIT commands."""
+        missing = []
+        for leg_idx in leg_indices:
+            leg_name = self.LEG_NAMES[leg_idx]
+            if self._leg_trajectory_publishers[leg_idx].get_subscription_count() == 0:
+                missing.append(f'leg{leg_name}/trajectory has no leg_trajectory_publisher subscriber')
+            if self._leg_command_publishers[leg_idx].get_subscription_count() == 0:
+                missing.append(f'leg{leg_name}/command has no leg kinematics subscriber')
+            for motor_idx in self.LEG_MOTOR_INDICES[leg_idx]:
+                if self._motor_cmd_publishers[motor_idx].get_subscription_count() == 0:
+                    missing.append(f'/motor{motor_idx}/mit_cmd has no CubeMars motor node subscriber')
+        return missing
+
+    def check_trajectory_pipeline(self, leg_indices : list[int] | None = None, timeout_sec : float = 2.0):
+        """Wait for and verify the trajectory -> leg/command -> motor/mit_cmd ROS pipeline."""
+        if leg_indices is None:
+            leg_indices = list(range(self.NUM_LEGS))
+        deadline = time.monotonic() + timeout_sec
+        missing = self._missing_trajectory_pipeline_connections(leg_indices)
+        while missing and time.monotonic() < deadline:
+            time.sleep(0.05)
+            missing = self._missing_trajectory_pipeline_connections(leg_indices)
+        if missing:
+            raise RuntimeError('Trajectory pipeline is incomplete: ' + '; '.join(missing))
     
     def get_leg_trajectories_from_file(self, rel_file : str, frequency : float) -> list[LegTrajectory]:
         """Get a list of LegTrajectory messages from a file."""
+        if frequency <= 0.0 or not math.isfinite(frequency):
+            raise ValueError('Trajectory frequency must be a positive finite number')
         file = os.path.join(self.TRAJECTORIES_FOLDER, rel_file)
         if not os.path.exists(file):
             raise FileNotFoundError(f'File {file} does not exist')
         leg_trajectories = [LegTrajectory() for _ in range(self.NUM_LEGS)]
         with open(file) as f:
-            for line in f:
+            for line_num, line in enumerate(f, start=1):
                 parts = line.split()
                 if len(parts) != 13:
-                    raise ValueError(f'Invalid file line: {line}')
-                time = float(parts[0]) / 1000.0 / frequency
+                    raise ValueError(f'Invalid file line {line_num}: {line}')
+                command_time = float(parts[0]) / 1000.0 / frequency
                 leg_id = int(parts[1])
+                if (leg_id >= self.NUM_LEGS) or (leg_id < 0):
+                    raise ValueError(f'Expected leg ids between 0 and {self.NUM_LEGS - 1} on line {line_num}')
                 msg = LegCommand()
                 msg.control_mode = int(parts[2])
                 msg.pos_setpoint.x = float(parts[4])
@@ -344,17 +421,19 @@ class SELQIE(Node):
                 msg.force_setpoint.x = float(parts[10])
                 msg.force_setpoint.y = float(parts[11])
                 msg.force_setpoint.z = float(parts[12])
-                if (leg_id > self.NUM_LEGS) or (leg_id < 0):
-                    raise ValueError(f'Expected leg ids between 0 and {self.NUM_LEGS - 1}')
-                leg_trajectories[leg_id].timing.append(time)
+                leg_trajectories[leg_id].timing.append(command_time)
                 leg_trajectories[leg_id].commands.append(msg)
+
+        for leg_id, trajectory in enumerate(leg_trajectories):
+            self.validate_leg_trajectory(leg_id, trajectory)
         return leg_trajectories
     
     def run_leg_trajectories(self, trajectories : list[LegTrajectory]):
         """Run a list of LegTrajectory messages."""
-        for i in range(len(trajectories)):
-            if trajectories[i] is not None:
-                self.send_leg_trajectory(i, trajectories[i])
+        leg_indices = [i for i, trajectory in enumerate(trajectories) if trajectory is not None]
+        self.check_trajectory_pipeline(leg_indices)
+        for i in leg_indices:
+            self.send_leg_trajectory(i, trajectories[i])
 
     ############################
     ### Sensor Data Functions ##

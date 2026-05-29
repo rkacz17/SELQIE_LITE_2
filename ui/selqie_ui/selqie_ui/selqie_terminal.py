@@ -130,8 +130,10 @@ class SELQIETerminal(Cmd):
                     self._selqie.run_leg_trajectories(trajectories)
                     rate.sleep()
                 print("Finished trajectory")
-        except ValueError:
-            print("Invalid number of loops or frequency")
+        except ValueError as exc:
+            print(f"Invalid trajectory command: {exc}")
+        except RuntimeError as exc:
+            print(exc)
         except FileNotFoundError:
             print("File not found")
             
