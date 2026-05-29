@@ -15,6 +15,7 @@ import threading
 import can
 import rclpy
 from rclpy.node import Node
+from actuation_msgs.msg import MotorCommand
 from std_msgs.msg import Float64MultiArray, String, Int32
 from motor_interfaces.msg import MotorState
 
@@ -295,6 +296,9 @@ class MotorNode(Node):
         self.declare_parameter("joint_name", "joint")  # Name for this joint/motor
         self.declare_parameter("auto_start", False)  # Whether to auto-start the motor
         self.declare_parameter("reverse_polarity", False)  # Reverse motor direction
+        self.declare_parameter("position_kp", 20.0)  # Kp for MotorCommand position mode
+        self.declare_parameter("position_kd", 1.0)  # Kd for MotorCommand position mode
+        self.declare_parameter("velocity_kd", 1.0)  # Kd for MotorCommand velocity mode
 
         # Get parameters
         self.iface = self.get_parameter("can_interface").value
@@ -313,6 +317,9 @@ class MotorNode(Node):
         self.auto_start = bool(self.get_parameter("auto_start").value)
         self.control_hz = self.get_parameter("control_hz").value
         self.reverse_polarity = bool(self.get_parameter("reverse_polarity").value)
+        self.position_kp = float(self.get_parameter("position_kp").value)
+        self.position_kd = float(self.get_parameter("position_kd").value)
+        self.velocity_kd = float(self.get_parameter("velocity_kd").value)
 
         # Log parameters for debugging
         self.get_logger().info(
@@ -323,6 +330,9 @@ class MotorNode(Node):
             Control Hz: {self.control_hz}
             Auto Start: {self.auto_start}
             Reverse Polarity: {self.reverse_polarity}
+            Position Kp: {self.position_kp}
+            Position Kd: {self.position_kd}
+            Velocity Kd: {self.velocity_kd}
             """
         )
 
@@ -354,11 +364,15 @@ class MotorNode(Node):
 
         # Subscribers
         # MIT command format: [position, velocity, Kp, Kd, torque]
-        self.create_subscription(
+        self.sub_mit_cmd = self.create_subscription(
             Float64MultiArray, f"/{self.joint_name}/mit_cmd", self.on_cmd, 10
         )
+        # Generic actuation command used by the leg kinematics stack.
+        self.sub_motor_command = self.create_subscription(
+            MotorCommand, f"/{self.joint_name}/command", self.on_motor_command, 10
+        )
         # Special commands: start, exit, zero, clear
-        self.create_subscription(
+        self.sub_special = self.create_subscription(
             String, f"/{self.joint_name}/special_cmd", self.on_special, 10
         )
 
@@ -413,6 +427,45 @@ class MotorNode(Node):
         #     self._send_special(0xFC)  # START command
         #     self._started = True
         #     self.get_logger().info(f"Auto-starting motor {self.joint_name} on first command")
+
+    def on_motor_command(self, msg):
+        """
+        Bridge the generic MotorCommand topic into the cached MIT command.
+
+        The rest of the SELQIE leg-control stack publishes MotorCommand messages
+        on /motorN/command. Cubemars motors are driven with MIT commands in the
+        form [position, velocity, Kp, Kd, torque], so this callback supplies the
+        gains that are not present in MotorCommand and lets _tick_control send
+        the packed CAN frame at the configured control rate.
+
+        Args:
+            msg: actuation_msgs/MotorCommand message
+        """
+        p = float(msg.pos_setpoint)
+        v = float(msg.vel_setpoint)
+        t = float(msg.torq_setpoint)
+
+        if msg.control_mode == MotorCommand.CONTROL_MODE_POSITION:
+            kp = self.position_kp
+            kd = self.position_kd
+        elif msg.control_mode == MotorCommand.CONTROL_MODE_VELOCITY:
+            p = 0.0
+            kp = 0.0
+            kd = self.velocity_kd
+        elif msg.control_mode == MotorCommand.CONTROL_MODE_TORQUE:
+            p = 0.0
+            v = 0.0
+            kp = 0.0
+            kd = 0.0
+        else:
+            self.get_logger().warn(
+                f"Unsupported MotorCommand control_mode {msg.control_mode}; command ignored"
+            )
+            return
+
+        with self._lock:
+            self.cmd = [p, v, kp, kd, t]
+            self._neutral_hold = False  # New command cancels any previous "clear" hold
 
     def on_special(self, msg):
         """
