@@ -16,7 +16,7 @@ from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Image, Imu
 from std_msgs.msg import String
 from std_msgs.msg import Float64MultiArray
-from actuation_msgs.msg import MotorCommand
+from actuation_msgs.msg import MotorCommand, MotorInfo
 from motor_interfaces.msg import MotorState
 from leg_control_msgs.msg import *
 from robot_localization.srv import SetPose
@@ -83,13 +83,15 @@ class SELQIE(Node):
     def init_motors(self):
         """Initialize the motor publishers and subscribers."""
         self.NUM_MOTORS = 8
-        self.DEFAULT_MOTOR_GAINS = [50.0, 0.05]
+        # Match actuation_bringup Cubemars defaults for safe MIT position commands.
+        self.DEFAULT_MOTOR_GAINS = [1.0, 0.0]
 
         self._motor_cmd_publishers = []
         self._motor_special_publishers = []
         self._motor_states = [MotorState() for _ in range(self.NUM_MOTORS)]
         self._motor_commands = [MotorCommand() for _ in range(self.NUM_MOTORS)]
         self._motor_errors = [String() for _ in range(self.NUM_MOTORS)]
+        self._motor_infos = [MotorInfo() for _ in range(self.NUM_MOTORS)]
 
         for i in range(self.NUM_MOTORS):
             self._motor_cmd_publishers.append(
@@ -112,6 +114,11 @@ class SELQIE(Node):
             motor_error_callback = lambda msg, i=i: self._motor_errors.__setitem__(i, msg)
             self.create_subscription(
                 String, f'/motor{i}/error_code', motor_error_callback, QOS_FAST()
+            )
+
+            motor_info_callback = lambda msg, i=i: self._motor_infos.__setitem__(i, msg)
+            self.create_subscription(
+                MotorInfo, f'/motor{i}/info', motor_info_callback, QOS_FAST()
             )
 
     def init_legs(self):
@@ -258,13 +265,17 @@ class SELQIE(Node):
                 raise ValueError(f"Motor index {motor_idx} out of range")
             node = f'/motor{motor_idx}_node'
             for name, value in (('position_kp', p_gain), ('position_kd', d_gain)):
-                subprocess.run(
-                    ['ros2', 'param', 'set', node, name, str(float(value))],
-                    check=True,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                )
+                try:
+                    subprocess.run(
+                        ['ros2', 'param', 'set', node, name, str(float(value))],
+                        check=True,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                    )
+                except subprocess.CalledProcessError as exc:
+                    detail = exc.stderr.strip() if exc.stderr else str(exc)
+                    raise RuntimeError(f"Failed to set {node} {name}: {detail}") from exc
 
     def autotune_cubemars_position_gains(
         self,
@@ -362,22 +373,38 @@ class SELQIE(Node):
         self.send_motor_command(motor_idx, pos, 0.0, self.DEFAULT_MOTOR_GAINS[0], self.DEFAULT_MOTOR_GAINS[1], 0.0)
 
     def set_motor_gains(self, motor_idx : int, p_gain : float, v_gain : float, v_int_gain : float | None = None):
-        """Update default MIT gains used by helper position commands."""
-        self.DEFAULT_MOTOR_GAINS = [p_gain, v_gain]
-
-    def set_motor_gains_default(self, motor_idx : int):
-        """Compatibility shim; no per-motor persistent gain command in Cubemars node."""
-        _ = motor_idx
-
-    def get_motor_info(self, motor_idx : int) -> String:
-        """Get the latest motor error/status string message."""
+        """Update helper MIT gains and the matching CubeMars node parameters."""
         if motor_idx < 0 or motor_idx >= self.NUM_MOTORS:
             raise ValueError(f"Motor index {motor_idx} out of range")
-        return self._motor_errors[motor_idx]
+        self.DEFAULT_MOTOR_GAINS = [float(p_gain), float(v_gain)]
+        try:
+            self.set_cubemars_position_gains(p_gain, v_gain, motors=[motor_idx])
+        except RuntimeError as exc:
+            self.get_logger().warn(f'Could not update CubeMars node gains: {exc}')
+        if v_int_gain is not None:
+            self.get_logger().warn('CubeMars MIT motors do not support integral gain; ignoring v_int_gain')
+
+    def set_motor_gains_default(self, motor_idx : int):
+        """Restore the default MIT gains for a CubeMars motor node."""
+        self.set_motor_gains(motor_idx, *self.DEFAULT_MOTOR_GAINS)
+
+    def get_motor_info(self, motor_idx : int) -> MotorInfo:
+        """Get the latest structured MotorInfo status message."""
+        if motor_idx < 0 or motor_idx >= self.NUM_MOTORS:
+            raise ValueError(f"Motor index {motor_idx} out of range")
+        return self._motor_infos[motor_idx]
 
     def get_motor_error_name(self, motor_idx : int) -> str:
         """Get latest human-readable error text for a motor."""
-        return self.get_motor_info(motor_idx).data
+        if motor_idx < 0 or motor_idx >= self.NUM_MOTORS:
+            raise ValueError(f"Motor index {motor_idx} out of range")
+        error_text = self._motor_errors[motor_idx].data
+        if error_text:
+            return error_text
+        info = self._motor_infos[motor_idx]
+        if info.error_name:
+            return f"Error Code {info.error}: {info.error_name}"
+        return ''
 
     def get_motor_estimate(self, motor_idx : int) -> MotorState:
         """Get latest Cubemars MotorState for a motor."""

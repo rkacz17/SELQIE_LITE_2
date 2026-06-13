@@ -59,14 +59,17 @@ class SELQIETerminal(Cmd):
     def do_set_gains(self, line : str):
         """ Set the gains for the motors """
         args = line.split()
-        if len(args) != 3:
-            print("Usage: set_gains <p_gain> <v_gain> <vi_gain>")
+        if len(args) not in (2, 3):
+            print("Usage: set_gains <p_gain> <d_gain> [integral_gain_ignored]")
             return
         try:
+            integral_gain = float(args[2]) if len(args) == 3 else None
             for i in range(self._selqie.NUM_MOTORS):
-                self._selqie.set_motor_gains(i, float(args[0]), float(args[1]), float(args[2]))
+                self._selqie.set_motor_gains(i, float(args[0]), float(args[1]), integral_gain)
         except ValueError:
             print("Invalid gain values")
+        except RuntimeError as exc:
+            print(f"Failed to update motor gains: {exc}")
 
 
     def do_auto_tune_gains(self, line : str):
@@ -179,11 +182,12 @@ class SELQIETerminal(Cmd):
         """ Print motor info """
         for i in range(self._selqie.NUM_MOTORS):
             state = self._selqie.get_motor_estimate(i)
-            err = self._selqie.get_motor_info(i)
+            info = self._selqie.get_motor_info(i)
             print(f"Motor {i}:")
             for attr in ["position", "abs_position", "velocity", "torque", "current", "temperature"]:
                 print(f"  {attr}: {getattr(state, attr)}")
-            print(f"  error: {err.data}")
+            print(f"  error: {self._selqie.get_motor_error_name(i)}")
+            print(f"  info: axis_state={info.axis_state}, error={info.error}, error_name={info.error_name}")
 
     def do_print_leg_info(self, line : str):
         """ Print leg info """
