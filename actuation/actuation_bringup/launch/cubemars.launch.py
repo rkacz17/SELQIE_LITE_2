@@ -46,7 +46,7 @@ def generate_launch_description():
             'interface', default_value='can0', description='CAN interface name.'
         ),
         DeclareLaunchArgument(
-            'motor_type', default_value='AK70-10', description='Cubemars motor type.'
+            'motor_type', default_value='AK40-10', description='Cubemars motor type.'
         ),
         DeclareLaunchArgument(
             'control_hz', default_value='100.0', description='Control loop rate in Hz.'
@@ -56,12 +56,12 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'position_kp',
-            default_value='20.0',
+            default_value='1.0',
             description='MIT Kp used for /motorN/command position control.',
         ),
         DeclareLaunchArgument(
             'position_kd',
-            default_value='1.0',
+            default_value='0.0',#0.025
             description='MIT Kd used for /motorN/command position control.',
         ),
         DeclareLaunchArgument(
