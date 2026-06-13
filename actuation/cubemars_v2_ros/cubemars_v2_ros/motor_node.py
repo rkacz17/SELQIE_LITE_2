@@ -307,6 +307,21 @@ def get_error_message(error_code):
     return MOTOR_ERROR_CODES.get(error_code, f"Unknown error code: {error_code}")
 
 
+def wrap_to_range(x, lo, hi):
+    """
+    Wrap a circular position command into the motor protocol's valid range.
+
+    CubeMars MIT position commands are encoded over a fixed finite range
+    (normally [-12.5, 12.5] rad).  Sending an absolute, unwrapped setpoint
+    directly to the driver can clamp the command to the range endpoint and make
+    the motor continue rotating instead of converging.  Wrapping preserves the
+    requested joint angle modulo one encoder span while keeping the CAN command
+    encodable.
+    """
+    span = hi - lo
+    return ((x - lo) % span) + lo
+
+
 # ===================== MOTOR NODE CLASS =====================
 
 
@@ -430,6 +445,7 @@ class MotorNode(Node):
         self._neutral_hold = (
             False  # When True, sends zero commands regardless of cmd cache
         )
+        self._position_control = False  # Whether cached command uses position mode
 
         # Absolute position tracking (unwrapping)
         self._last_p = None  # Last raw position reading
@@ -468,6 +484,7 @@ class MotorNode(Node):
         with self._lock:
             self.cmd = list(map(float, msg.data))
             self._neutral_hold = False  # New command cancels any previous "clear" hold
+            self._position_control = self.cmd[2] > 0.0
 
         # Auto-start the motor on first command if not already started
         # if not self._started:
@@ -535,15 +552,18 @@ class MotorNode(Node):
         if msg.control_mode == MotorCommand.CONTROL_MODE_POSITION:
             kp = self.position_kp
             kd = self.position_kd
+            position_control = True
         elif msg.control_mode == MotorCommand.CONTROL_MODE_VELOCITY:
             p = 0.0
             kp = 0.0
             kd = self.velocity_kd
+            position_control = False
         elif msg.control_mode == MotorCommand.CONTROL_MODE_TORQUE:
             p = 0.0
             v = 0.0
             kp = 0.0
             kd = 0.0
+            position_control = False
         else:
             self.get_logger().warn(
                 f"Unsupported MotorCommand control_mode {msg.control_mode}; command ignored"
@@ -553,6 +573,7 @@ class MotorNode(Node):
         with self._lock:
             self.cmd = [p, v, kp, kd, t]
             self._neutral_hold = False  # New command cancels any previous "clear" hold
+            self._position_control = position_control
 
     def on_special(self, msg):
         """
@@ -592,6 +613,7 @@ class MotorNode(Node):
             with self._lock:
                 self.cmd = [0.0, 0.0, 0.0, 0.0, 0.0]  # Clear command cache
                 self._neutral_hold = True  # Hold zeros until new command
+                self._position_control = False
 
             # Send zero command immediately
             self._send_mit_once(0, 0, 0, 0, 0)
@@ -608,6 +630,10 @@ class MotorNode(Node):
         with self._lock:
             # If in neutral hold mode, send zeros; otherwise send cached command
             p, v, kp, kd, t = ([0.0] * 5) if self._neutral_hold else self.cmd
+            position_control = self._position_control
+
+        if position_control:
+            p = wrap_to_range(p, self.R["P_MIN"], self.R["P_MAX"])
 
         # Apply reverse polarity if configured
         if self.reverse_polarity:
