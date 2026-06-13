@@ -13,6 +13,7 @@ def launch_setup(context, *args, **kwargs):
     position_kp = LaunchConfiguration('position_kp').perform(context)
     position_kd = LaunchConfiguration('position_kd').perform(context)
     velocity_kd = LaunchConfiguration('velocity_kd').perform(context)
+    protocol = LaunchConfiguration('protocol').perform(context)
 
     joint_name = f'motor{motor_id}'
 
@@ -29,6 +30,7 @@ def launch_setup(context, *args, **kwargs):
                 'control_hz': float(control_hz),
                 'joint_name': joint_name,
                 'auto_start': auto_start.lower() in ('true', '1', 'yes'),
+                'protocol': protocol,
                 'position_kp': float(position_kp),
                 'position_kd': float(position_kd),
                 'velocity_kd': float(velocity_kd),
@@ -53,6 +55,11 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'auto_start', default_value='false', description='Start motor automatically.'
+        ),
+        DeclareLaunchArgument(
+            'protocol',
+            default_value='ak2',
+            description='CAN protocol: ak2/tmotor for AK 2.0 standard-frame MIT, ak3/cubemars for extended MIT.',
         ),
         DeclareLaunchArgument(
             'position_kp',

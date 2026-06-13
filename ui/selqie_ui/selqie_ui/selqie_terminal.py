@@ -68,6 +68,40 @@ class SELQIETerminal(Cmd):
         except ValueError:
             print("Invalid gain values")
 
+
+    def do_auto_tune_gains(self, line : str):
+        """ Auto-tune CubeMars position gains on a trajectory file """
+        args = line.split()
+        if len(args) < 3:
+            print("Usage: auto_tune_gains <file> <frequency> <loops> [kp_csv] [kd_csv]")
+            return
+        try:
+            trajectory_file = args[0]
+            frequency = float(args[1])
+            loops = int(args[2])
+            kp_candidates = [float(x) for x in args[3].split(',')] if len(args) > 3 else None
+            kd_candidates = [float(x) for x in args[4].split(',')] if len(args) > 4 else None
+            summary = self._selqie.autotune_cubemars_position_gains(
+                trajectory_file,
+                frequency=frequency,
+                loops=loops,
+                kp_candidates=kp_candidates,
+                kd_candidates=kd_candidates,
+            )
+            for result in summary['results']:
+                print(
+                    f"kp={result['kp']:.4g} kd={result['kd']:.4g} "
+                    f"score={result['score']:.6g} metrics={result['metrics']}"
+                )
+            best = summary['best']
+            print(f"Best gains applied: position_kp={best['kp']:.4g}, position_kd={best['kd']:.4g}")
+        except ValueError:
+            print("Invalid auto-tune argument")
+        except FileNotFoundError:
+            print("File not found")
+        except Exception as exc:
+            print(f"Auto-tune failed: {exc}")
+
     def do_default(self, line : str):
         """ Set default motor gains and leg positions """
         for i in range(self._selqie.NUM_MOTORS):
