@@ -309,18 +309,14 @@ def get_error_message(error_code):
 
 
 def wrap_to_range(x, lo, hi):
-    """
-    Wrap a circular position command into the motor protocol's valid range.
-
-    CubeMars MIT position commands are encoded over a fixed finite range
-    (normally [-12.5, 12.5] rad).  Sending an absolute, unwrapped setpoint
-    directly to the driver can clamp the command to the range endpoint and make
-    the motor continue rotating instead of converging.  Wrapping preserves the
-    requested joint angle modulo one encoder span while keeping the CAN command
-    encodable.
-    """
+    """Wrap a circular position value into the motor protocol's valid range."""
     span = hi - lo
     return ((x - lo) % span) + lo
+
+
+def shortest_wrapped_delta(target, current, span):
+    """Return the shortest signed circular error from current to target."""
+    return ((target - current + 0.5 * span) % span) - 0.5 * span
 
 
 # ===================== MOTOR NODE CLASS =====================
@@ -632,6 +628,26 @@ class MotorNode(Node):
                 f"Unknown special command: '{m}'. Valid options: start|exit|zero|clear"
             )
 
+    def _position_command_for_nearest_turn(self, target_position):
+        """Convert an absolute setpoint to the nearest encodable MIT position.
+
+        The CubeMars MIT packet can only encode one 25 rad position window, but
+        callers in this stack use the unwrapped absolute motor position.  A raw
+        modulo wrap can turn a small absolute correction into a nearly full-turn
+        command when the motor is close to a protocol boundary.  Rebase the
+        target onto the currently observed raw encoder turn so the motor takes
+        the shortest path to the requested absolute position.
+        """
+        with self._lock:
+            current_raw = self._last_p
+            current_abs = self._p_abs
+
+        if current_raw is None:
+            return wrap_to_range(target_position, self.R["P_MIN"], self.R["P_MAX"])
+
+        error = shortest_wrapped_delta(target_position, current_abs, self._span)
+        return wrap_to_range(current_raw + error, self.R["P_MIN"], self.R["P_MAX"])
+
     # ---- Control Loop ----
     def _tick_control(self):
         """Periodic control loop that sends commands to the motor"""
@@ -641,7 +657,7 @@ class MotorNode(Node):
             position_control = self._position_control
 
         if position_control:
-            p = wrap_to_range(p, self.R["P_MIN"], self.R["P_MAX"])
+            p = self._position_command_for_nearest_turn(p)
 
         # Apply reverse polarity if configured
         if self.reverse_polarity:
