@@ -344,6 +344,9 @@ class MotorNode(Node):
         self.declare_parameter("control_hz", 20.0)  # Control loop frequency
         self.declare_parameter("joint_name", "joint")  # Name for this joint/motor
         self.declare_parameter("auto_start", False)  # Whether to auto-start the motor
+        self.declare_parameter(
+            "zero_on_startup", True
+        )  # Set current encoder position as zero during node startup
         self.declare_parameter("reverse_polarity", False)  # Reverse motor direction
         self.declare_parameter("protocol", "ak2")  # ak2/tmotor standard MIT or ak3/cubemars extended MIT
         self.declare_parameter("position_kp", 20.0)  # Kp for MotorCommand position mode
@@ -365,6 +368,7 @@ class MotorNode(Node):
             self.get_parameter("control_hz").value
         )  # Control period
         self.auto_start = bool(self.get_parameter("auto_start").value)
+        self.zero_on_startup = bool(self.get_parameter("zero_on_startup").value)
         self.control_hz = self.get_parameter("control_hz").value
         self.reverse_polarity = bool(self.get_parameter("reverse_polarity").value)
         self.protocol = str(self.get_parameter("protocol").value).lower()
@@ -383,6 +387,7 @@ class MotorNode(Node):
             Motor type: {self.motor_type}
             Control Hz: {self.control_hz}
             Auto Start: {self.auto_start}
+            Zero On Startup: {self.zero_on_startup}
             Reverse Polarity: {self.reverse_polarity}
             Protocol: {self.protocol}
             Position Kp: {self.position_kp}
@@ -464,6 +469,11 @@ class MotorNode(Node):
         self._stop = False  # Flag to stop the RX thread
         self._rx = threading.Thread(target=self._rx_loop, daemon=True)
         self._rx.start()
+
+        # Set the current encoder position as zero on node startup using the
+        # motor vendor's official CAN zero command.
+        if self.zero_on_startup:
+            self._zero_encoder()
 
         # Optional auto-start on initialization
         if self.auto_start and not self._started:
@@ -606,11 +616,7 @@ class MotorNode(Node):
 
         elif m == "zero":
             # Zero/home the encoder
-            if self.protocol in ("ak2", "tmotor"):
-                self._send_special(0xFE)  # ZERO command (0xFE)
-                self.get_logger().info(f"Zeroing encoder for motor {self.joint_name}")
-            else:
-                self.get_logger().warn("Zero over CAN is not implemented for the AK 3.0 extended protocol")
+            self._zero_encoder()
 
         elif m == "clear":
             # Clear all commands (send zeros and hold)
@@ -679,6 +685,23 @@ class MotorNode(Node):
             )
 
     # ---- Helper Methods ----
+
+    def _zero_encoder(self):
+        """Set the motor's current encoder position as zero using official CAN."""
+        if self.protocol not in ("ak2", "tmotor"):
+            self.get_logger().warn(
+                "Zero over CAN is not implemented for the AK 3.0 extended protocol"
+            )
+            return
+
+        self._send_special(0xFE)  # Official ZERO command (0xFE)
+        with self._lock:
+            self._last_p = None
+            self._p_abs = 0.0
+        self.get_logger().info(
+            f"Set current encoder position as zero for motor {self.joint_name}"
+        )
+
     def _send_special(self, code):
         """
         Send special command code to the motor
