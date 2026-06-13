@@ -20,6 +20,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
+            'selqie_autotune_gains = selqie_python.autotune_gains:main',
         ],
     },
 )

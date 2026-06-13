@@ -15,6 +15,7 @@ import threading
 import can
 import rclpy
 from rclpy.node import Node
+from rcl_interfaces.msg import SetParametersResult
 from actuation_msgs.msg import MotorCommand
 from std_msgs.msg import Float64MultiArray, String, Int32
 from motor_interfaces.msg import MotorState
@@ -320,6 +321,7 @@ class MotorNode(Node):
         self.position_kp = float(self.get_parameter("position_kp").value)
         self.position_kd = float(self.get_parameter("position_kd").value)
         self.velocity_kd = float(self.get_parameter("velocity_kd").value)
+        self.add_on_set_parameters_callback(self._on_parameter_update)
 
         # Log parameters for debugging
         self.get_logger().info(
@@ -427,6 +429,46 @@ class MotorNode(Node):
         #     self._send_special(0xFC)  # START command
         #     self._started = True
         #     self.get_logger().info(f"Auto-starting motor {self.joint_name} on first command")
+
+
+    def _on_parameter_update(self, params):
+        """Apply runtime gain updates from ros2 param set /motorN_node ..."""
+        next_position_kp = self.position_kp
+        next_position_kd = self.position_kd
+        next_velocity_kd = self.velocity_kd
+
+        for param in params:
+            if param.name == "position_kp":
+                next_position_kp = float(param.value)
+            elif param.name == "position_kd":
+                next_position_kd = float(param.value)
+            elif param.name == "velocity_kd":
+                next_velocity_kd = float(param.value)
+
+        if not (self.R["KP_MIN"] <= next_position_kp <= self.R["KP_MAX"]):
+            return SetParametersResult(
+                successful=False,
+                reason=f"position_kp must be in [{self.R['KP_MIN']}, {self.R['KP_MAX']}]",
+            )
+        if not (self.R["KD_MIN"] <= next_position_kd <= self.R["KD_MAX"]):
+            return SetParametersResult(
+                successful=False,
+                reason=f"position_kd must be in [{self.R['KD_MIN']}, {self.R['KD_MAX']}]",
+            )
+        if not (self.R["KD_MIN"] <= next_velocity_kd <= self.R["KD_MAX"]):
+            return SetParametersResult(
+                successful=False,
+                reason=f"velocity_kd must be in [{self.R['KD_MIN']}, {self.R['KD_MAX']}]",
+            )
+
+        self.position_kp = next_position_kp
+        self.position_kd = next_position_kd
+        self.velocity_kd = next_velocity_kd
+        self.get_logger().info(
+            f"Updated gains: position_kp={self.position_kp}, "
+            f"position_kd={self.position_kd}, velocity_kd={self.velocity_kd}"
+        )
+        return SetParametersResult(successful=True)
 
     def on_motor_command(self, msg):
         """
