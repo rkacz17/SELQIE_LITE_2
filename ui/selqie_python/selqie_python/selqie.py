@@ -344,11 +344,44 @@ class SELQIE(Node):
                 msg.force_setpoint.x = float(parts[10])
                 msg.force_setpoint.y = float(parts[11])
                 msg.force_setpoint.z = float(parts[12])
-                if (leg_id > self.NUM_LEGS) or (leg_id < 0):
+                if (leg_id >= self.NUM_LEGS) or (leg_id < 0):
                     raise ValueError(f'Expected leg ids between 0 and {self.NUM_LEGS - 1}')
                 leg_trajectories[leg_id].timing.append(time)
                 leg_trajectories[leg_id].commands.append(msg)
+        self._fill_missing_trajectory_velocities(leg_trajectories)
         return leg_trajectories
+
+    def _fill_missing_trajectory_velocities(self, trajectories : list[LegTrajectory]):
+        """Backfill velocity feed-forward for legacy position-only gait files."""
+        for trajectory in trajectories:
+            if len(trajectory.commands) < 2:
+                continue
+
+            for i, command in enumerate(trajectory.commands):
+                if command.control_mode != LegCommand.CONTROL_MODE_POSITION:
+                    continue
+                if any((command.vel_setpoint.x, command.vel_setpoint.y, command.vel_setpoint.z)):
+                    continue
+
+                if i == 0:
+                    prev_i = i
+                    next_i = i + 1
+                elif i == len(trajectory.commands) - 1:
+                    prev_i = i - 1
+                    next_i = i
+                else:
+                    prev_i = i - 1
+                    next_i = i + 1
+
+                dt = trajectory.timing[next_i] - trajectory.timing[prev_i]
+                if dt <= 0.0:
+                    continue
+
+                prev_pos = trajectory.commands[prev_i].pos_setpoint
+                next_pos = trajectory.commands[next_i].pos_setpoint
+                command.vel_setpoint.x = (next_pos.x - prev_pos.x) / dt
+                command.vel_setpoint.y = (next_pos.y - prev_pos.y) / dt
+                command.vel_setpoint.z = (next_pos.z - prev_pos.z) / dt
     
     def run_leg_trajectories(self, trajectories : list[LegTrajectory]):
         """Run a list of LegTrajectory messages."""
