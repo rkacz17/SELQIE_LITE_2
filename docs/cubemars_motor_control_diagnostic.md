@@ -43,6 +43,21 @@ The AK 2.0 MIT reply layout is a driver ID byte followed by packed 16-bit positi
 - Confirm the configured CAN IDs match `/motorN_node` launch arguments.
 - Start with low candidate gains and current limits, then widen the autotune sweep only after observing stable low-speed movement.
 
+
+### 6. Motor feedback topics must match the leg-control subscriptions
+
+`leg_kinematics` consumes `actuation_msgs/MotorEstimate` on `/motorN/estimate` to compute the Jacobian, foot estimate, and velocity/force transforms. The CubeMars node now publishes that compatibility topic from each CAN feedback frame in addition to its detailed `/motorN/motor_state` topic, so the leg controller no longer runs on default-zero motor estimates.
+
+The node also publishes `/motorN/info` using `actuation_msgs/MotorInfo`, matching the rosbag topic list and preserving fault visibility through the actuation stack.
+
+### 7. Five-bar inverse-kinematics wrap state must be per leg
+
+The inverse-kinematics loop-correction state is per `FiveBar2DModel` instance. Sharing this state across legs can cause discontinuous motor setpoints when one leg crosses the wrap boundary while another leg is executing a different trajectory.
+
+### 8. Build-interface compatibility
+
+The C++ nodes now include `<algorithm>` explicitly where they call `std::is_sorted` and `std::clamp`; this avoids depending on transitive includes that may differ by compiler and ROS distribution.
+
 ## Recommended first autotune command
 
 ```bash
