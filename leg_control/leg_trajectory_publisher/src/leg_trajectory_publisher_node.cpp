@@ -111,20 +111,15 @@ private:
             return;
         }
 
-        // Get the delay for the current leg command in seconds
-        const auto delay = _traj->timing[_idx];
-
-        // Check if the delay greater than the current time
+        // Publish every command that is due.  The legacy gait files can contain
+        // samples faster than a non-real-time ROS timer can wake up consistently;
+        // sending only one stale sample per timer tick creates bursty catch-up and
+        // makes CubeMars MIT position control look like a gain problem.
         const auto diff = current_time - _start_time;
-        if (delay > diff)
+        while (_idx < _traj->timing.size() && _traj->timing[_idx] <= diff)
         {
-            // If so, return without executing the leg command
-            // Essentially waits until the next leg command is ready to be executed
-            return;
+            _leg_command_pub->publish(_traj->commands[_idx++]);
         }
-
-        // Publish the leg command for the current index and increment the index
-        _leg_command_pub->publish(_traj->commands[_idx++]);
 
         // Check if the index is now greater than the trajectory size
         if (_idx >= _traj->timing.size())
