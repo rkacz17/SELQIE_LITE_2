@@ -10,14 +10,15 @@ The node publishes motor state data including position, velocity, torque,
 temperature, and error codes, and subscribes to command topics for motor control.
 """
 
+import math
 import threading
 
 import can
 import rclpy
 from rclpy.node import Node
 from rcl_interfaces.msg import SetParametersResult
-from actuation_msgs.msg import MotorCommand
-from std_msgs.msg import Float64MultiArray, String, Int32
+from actuation_msgs.msg import MotorCommand, MotorEstimate, MotorInfo
+from std_msgs.msg import Float64MultiArray, String
 from motor_interfaces.msg import MotorState
 
 # TODO: Add additional motors and their specifications
@@ -423,6 +424,12 @@ class MotorNode(Node):
         self.pub_state = self.create_publisher(
             MotorState, f"/{self.joint_name}/motor_state", 10
         )
+        self.pub_estimate = self.create_publisher(
+            MotorEstimate, f"/{self.joint_name}/estimate", 10
+        )
+        self.pub_info = self.create_publisher(
+            MotorInfo, f"/{self.joint_name}/info", 10
+        )
 
         # Subscribers
         # MIT command format: [position, velocity, Kp, Kd, torque]
@@ -446,6 +453,7 @@ class MotorNode(Node):
             False  # When True, sends zero commands regardless of cmd cache
         )
         self._position_control = False  # Whether cached command uses position mode
+        self._warned_no_torque_constant = False
 
         # Absolute position tracking (unwrapping)
         self._last_p = None  # Last raw position reading
@@ -725,7 +733,13 @@ class MotorNode(Node):
                 if not s:
                     continue
                 drv, p, v, tau, temp, err = s
-                current = tau / TORQUE_CONSTANTS[self.motor_type]
+                torque_constant = TORQUE_CONSTANTS.get(self.motor_type)
+                current = tau / torque_constant if torque_constant else 0.0
+                if torque_constant is None and not self._warned_no_torque_constant:
+                    self.get_logger().warn(
+                        f"No torque constant configured for {self.motor_type}; publishing current as 0.0 A"
+                    )
+                    self._warned_no_torque_constant = True
 
                 # Verify the driver ID matches our expected ID (low byte of arbitration ID)
                 if drv != (self.arb & 0xFF):
@@ -776,6 +790,18 @@ class MotorNode(Node):
             ms.current = current  # current in A
             ms.temperature = temp  # Temperature in °C
             self.pub_state.publish(ms)
+
+            estimate = MotorEstimate()
+            estimate.pos_estimate = float(self._p_abs)
+            estimate.vel_estimate = float(v)
+            estimate.torq_estimate = float(tau)
+            self.pub_estimate.publish(estimate)
+
+            info = MotorInfo()
+            info.axis_state = 0
+            info.error = int(err)
+            info.error_name = get_error_message(err)
+            self.pub_info.publish(info)
 
     def destroy_node(self):
         """Clean up resources when the node is shutting down"""

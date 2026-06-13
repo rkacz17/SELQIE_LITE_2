@@ -1,3 +1,5 @@
+#include <algorithm>
+
 #include <rclcpp/rclcpp.hpp>
 #include <leg_control_msgs/msg/leg_command.hpp>
 #include <leg_control_msgs/msg/leg_trajectory.hpp>

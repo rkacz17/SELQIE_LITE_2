@@ -1,3 +1,5 @@
+#include <algorithm>
+
 #include <rclcpp/rclcpp.hpp>
 
 #include "leg_kinematics/leg_kinematics_node.hpp"
@@ -10,6 +12,8 @@ class FiveBar2DModel : public LegKinematicsModel
 {
 private:
     const float _L1, _L2, _YA; // Five-bar leg parameters
+    mutable int _wrap_count = 0;
+    mutable bool _last_z_positive = false;
 
 public:
     FiveBar2DModel(const float L1, const float L2, const float y_axis)
@@ -56,21 +60,22 @@ public:
         const float X = foot_position.x();
         const float Z = foot_position.z();
 
-        // Loop correction technique
-        // This ensures that the angles don't jump discontinuously at the domain border
-        static int n = 0;
-        static bool signZ_last = Z > 0.0f;
-        bool signZ = Z > 0.0f;
-        if ((X < 0.0f) && (signZ != signZ_last))
+        // Loop correction technique. Keep the wrap state per leg model; a
+        // function-level static is shared by every leg node in the process and
+        // can make one leg's trajectory create discontinuous motor commands on
+        // another leg.
+        const bool z_positive = Z > 0.0f;
+        if ((X < 0.0f) && (z_positive != _last_z_positive))
         {
-            n += signZ ? 1 : -1;
+            _wrap_count += z_positive ? 1 : -1;
         }
-        signZ_last = signZ;
+        _last_z_positive = z_positive;
 
-        const float theta0 = 2.0 * M_PI * n - std::atan2(Z, X);
+        const float theta0 = 2.0 * M_PI * _wrap_count - std::atan2(Z, X);
         const float theta1 = M_PI - theta0;
         const float R = std::sqrt(X * X + Z * Z);
-        const float alpha = std::acos((R * R + _L1 * _L1 - _L2 * _L2) / (2.0f * R * _L1));
+        const float alpha_arg = (R * R + _L1 * _L1 - _L2 * _L2) / (2.0f * R * _L1);
+        const float alpha = std::acos(std::clamp(alpha_arg, -1.0f, 1.0f));
 
         const float thetaA = theta0 - alpha;
         const float thetaB = theta1 - alpha;
