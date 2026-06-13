@@ -228,6 +228,25 @@ def pack_mit(p, v, kp, kd, t, R):
     )
 
 
+def pack_mit_cubemars(p, v, kp, kd, t, R):
+    """Pack the official CubeMars AK-series extended-frame MIT command."""
+    p_i = f2u(p, R["P_MIN"], R["P_MAX"], 16)
+    v_i = f2u(v, R["V_MIN"], R["V_MAX"], 12)
+    kp_i = f2u(kp, R["KP_MIN"], R["KP_MAX"], 12)
+    kd_i = f2u(kd, R["KD_MIN"], R["KD_MAX"], 12)
+    t_i = f2u(t, R["T_MIN"], R["T_MAX"], 12)
+
+    return bytes([
+        (kp_i >> 4) & 0xFF,
+        ((kp_i & 0x0F) << 4) | ((kd_i >> 8) & 0x0F),
+        kd_i & 0xFF,
+        (p_i >> 8) & 0xFF,
+        p_i & 0xFF,
+        (v_i >> 4) & 0xFF,
+        ((v_i & 0x0F) << 4) | ((t_i >> 8) & 0x0F),
+        t_i & 0xFF,
+    ])
+
 def parse_reply(b, R):
     """
     Parse the CAN reply from the motor controller.
@@ -247,7 +266,7 @@ def parse_reply(b, R):
     p_int = (b[1] << 8) | b[2]  # Position (16 bits)
     v_int = (b[3] << 4) | (b[4] >> 4)  # Velocity (12 bits)
     i_int = ((b[4] & 0x0F) << 8) | b[5]  # Current/Torque (12 bits)
-    temp = b[6]  # Temperature (8 bits)
+    temp = b[6] - 40  # Temperature in Celsius for AK 2.0 MIT feedback
     err = b[7]  # Error code (8 bits)
 
     # Convert integer values back to physical units
@@ -257,6 +276,23 @@ def parse_reply(b, R):
 
     return drv, p, v, tau, temp, err
 
+
+def parse_reply_cubemars(b, motor_type):
+    """Parse the official CubeMars periodic CAN upload message."""
+    if len(b) != 8:
+        return None
+
+    p_raw = int.from_bytes(bytes(b[0:2]), byteorder="big", signed=True)
+    v_raw = int.from_bytes(bytes(b[2:4]), byteorder="big", signed=True)
+    current_raw = int.from_bytes(bytes(b[4:6]), byteorder="big", signed=True)
+    temp = b[6]
+    err = b[7]
+
+    position_rad = math.radians(p_raw * 0.1)
+    velocity_erpm = v_raw * 10.0
+    current_a = current_raw * 0.01
+    torque_nm = current_a * TORQUE_CONSTANTS[motor_type]
+    return 0, position_rad, velocity_erpm, torque_nm, current_a, temp, err
 
 def get_error_message(error_code):
     """
@@ -312,6 +348,7 @@ class MotorNode(Node):
         self.declare_parameter("joint_name", "joint")  # Name for this joint/motor
         self.declare_parameter("auto_start", False)  # Whether to auto-start the motor
         self.declare_parameter("reverse_polarity", False)  # Reverse motor direction
+        self.declare_parameter("protocol", "ak2")  # ak2/tmotor standard MIT or ak3/cubemars extended MIT
         self.declare_parameter("position_kp", 20.0)  # Kp for MotorCommand position mode
         self.declare_parameter("position_kd", 1.0)  # Kd for MotorCommand position mode
         self.declare_parameter("velocity_kd", 1.0)  # Kd for MotorCommand velocity mode
@@ -333,6 +370,9 @@ class MotorNode(Node):
         self.auto_start = bool(self.get_parameter("auto_start").value)
         self.control_hz = self.get_parameter("control_hz").value
         self.reverse_polarity = bool(self.get_parameter("reverse_polarity").value)
+        self.protocol = str(self.get_parameter("protocol").value).lower()
+        if self.protocol not in ("ak2", "tmotor", "ak3", "cubemars"):
+            raise ValueError("protocol must be ak2/tmotor or ak3/cubemars")
         self.position_kp = float(self.get_parameter("position_kp").value)
         self.position_kd = float(self.get_parameter("position_kd").value)
         self.velocity_kd = float(self.get_parameter("velocity_kd").value)
@@ -347,18 +387,26 @@ class MotorNode(Node):
             Control Hz: {self.control_hz}
             Auto Start: {self.auto_start}
             Reverse Polarity: {self.reverse_polarity}
+            Protocol: {self.protocol}
             Position Kp: {self.position_kp}
             Position Kd: {self.position_kd}
             Velocity Kd: {self.velocity_kd}
             """
         )
 
-        self.arb = self.can_id & 0x7FF  # CAN arbitration ID (standard 11-bit frame)
+        if self.protocol in ("ak3", "cubemars"):
+            self.arb = (8 << 8) | (self.can_id & 0xFF)  # Official MIT control extended ID
+            self.rx_arb = self.can_id & 0xFF
+            self.is_extended_id = True
+        else:
+            self.arb = self.can_id & 0x7FF  # Legacy/TMotor MIT standard ID
+            self.rx_arb = self.arb
+            self.is_extended_id = False
         try:
             self.bus = can.interface.Bus(bustype="socketcan", channel=self.iface)
             try:
                 # Filter to only receive messages with our CAN ID
-                self.bus.set_filters([{"can_id": self.arb, "can_mask": 0x7FF}])
+                self.bus.set_filters([{"can_id": self.rx_arb, "can_mask": 0x1FFFFFFF if self.is_extended_id else 0x7FF}])
             except Exception:
                 pass  # Some interfaces don't support filtering
         except Exception as e:
@@ -366,9 +414,6 @@ class MotorNode(Node):
                 f"Failed to initialize CAN bus on interface '{self.iface}': {e}"
             )
             raise
-            self.bus.set_filters([{"can_id": self.arb, "can_mask": 0x7FF}])
-        except Exception:
-            pass  # Some interfaces don't support filtering
 
         # ---- ROS Publishers and Subscribers ----
         # Publishers
@@ -542,21 +587,26 @@ class MotorNode(Node):
         if m == "start":
             # Start the motor (MIT control mode)
             if not self._started:
-                self._send_special(0xFC)  # START command (0xFC)
+                if self.protocol in ("ak2", "tmotor"):
+                    self._send_special(0xFC)  # START command (0xFC)
                 self._started = True
                 self.get_logger().info(f"Starting motor {self.joint_name}")
 
         elif m == "exit":
             # Exit MIT control mode
             if self._started:
-                self._send_special(0xFD)  # EXIT command (0xFD)
+                if self.protocol in ("ak2", "tmotor"):
+                    self._send_special(0xFD)  # EXIT command (0xFD)
                 self._started = False
                 self.get_logger().info(f"Exiting MIT mode for motor {self.joint_name}")
 
         elif m == "zero":
             # Zero/home the encoder
-            self._send_special(0xFE)  # ZERO command (0xFE)
-            self.get_logger().info(f"Zeroing encoder for motor {self.joint_name}")
+            if self.protocol in ("ak2", "tmotor"):
+                self._send_special(0xFE)  # ZERO command (0xFE)
+                self.get_logger().info(f"Zeroing encoder for motor {self.joint_name}")
+            else:
+                self.get_logger().warn("Zero over CAN is not implemented for the AK 3.0 extended protocol")
 
         elif m == "clear":
             # Clear all commands (send zeros and hold)
@@ -592,12 +642,12 @@ class MotorNode(Node):
             t = -t  # Invert torque
 
         # Pack the command into CAN message format
-        data = pack_mit(p, v, kp, kd, t, self.R)
+        data = (pack_mit_cubemars(p, v, kp, kd, t, self.R) if self.protocol in ("ak3", "cubemars") else pack_mit(p, v, kp, kd, t, self.R))
 
         try:
             # Send the command over CAN
             self.bus.send(
-                can.Message(arbitration_id=self.arb, data=data, is_extended_id=False)
+                can.Message(arbitration_id=self.arb, data=data, is_extended_id=self.is_extended_id)
             )
         except can.CanError:
             self.get_logger().error(
@@ -617,7 +667,7 @@ class MotorNode(Node):
 
         try:
             self.bus.send(
-                can.Message(arbitration_id=self.arb, data=d, is_extended_id=False)
+                can.Message(arbitration_id=self.arb, data=d, is_extended_id=self.is_extended_id)
             )
         except can.CanError:
             self.get_logger().error(
@@ -641,11 +691,11 @@ class MotorNode(Node):
             v = -v  # Invert velocity
             t = -t  # Invert torque
 
-        d = pack_mit(p, v, kp, kd, t, self.R)
+        d = (pack_mit_cubemars(p, v, kp, kd, t, self.R) if self.protocol in ("ak3", "cubemars") else pack_mit(p, v, kp, kd, t, self.R))
 
         try:
             self.bus.send(
-                can.Message(arbitration_id=self.arb, data=d, is_extended_id=False)
+                can.Message(arbitration_id=self.arb, data=d, is_extended_id=self.is_extended_id)
             )
         except can.CanError:
             self.get_logger().error(
@@ -661,19 +711,25 @@ class MotorNode(Node):
             rx = self.bus.recv(timeout=0.1)
 
             # Skip if no message or wrong ID/length
-            if not rx or rx.arbitration_id != self.arb or len(rx.data) != 8:
+            if not rx or rx.arbitration_id != self.rx_arb or len(rx.data) != 8:
                 continue
 
             # Parse the motor reply
-            s = parse_reply(rx.data, self.R)
-            if not s:
-                continue
+            if self.protocol in ("ak3", "cubemars"):
+                s = parse_reply_cubemars(rx.data, self.motor_type)
+                if not s:
+                    continue
+                drv, p, v, tau, current, temp, err = s
+            else:
+                s = parse_reply(rx.data, self.R)
+                if not s:
+                    continue
+                drv, p, v, tau, temp, err = s
+                current = tau / TORQUE_CONSTANTS[self.motor_type]
 
-            drv, p, v, tau, temp, err = s
-
-            # Verify the driver ID matches our expected ID (low byte of arbitration ID)
-            if drv != (self.arb & 0xFF):
-                continue
+                # Verify the driver ID matches our expected ID (low byte of arbitration ID)
+                if drv != (self.arb & 0xFF):
+                    continue
 
             # Apply reverse polarity to received values if configured
             if self.reverse_polarity:
@@ -715,15 +771,16 @@ class MotorNode(Node):
             ms.name = self.joint_name  # Motor/joint name
             ms.position = p  # Position in rad (raw)
             ms.abs_position = self._p_abs  # Absolute position in rad (unwrapped)
-            ms.velocity = v  # Velocity in rad/s
+            ms.velocity = v  # Velocity in rad/s for tmotor, ERPM for official CubeMars feedback
             ms.torque = tau  #  Torque in Nms
-            ms.current = tau * TORQUE_CONSTANTS[self.motor_type]  # current in A
+            ms.current = current  # current in A
             ms.temperature = temp  # Temperature in °C
             self.pub_state.publish(ms)
 
     def destroy_node(self):
         """Clean up resources when the node is shutting down"""
-        self._send_special(0xFD)  # EXIT command (0xFD)
+        if self.protocol in ("ak2", "tmotor"):
+            self._send_special(0xFD)  # EXIT command (0xFD)
         self._stop = True  # Signal RX thread to stop
 
         try:

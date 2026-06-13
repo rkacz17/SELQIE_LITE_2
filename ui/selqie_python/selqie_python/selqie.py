@@ -1,5 +1,6 @@
 import os
 import math
+import time
 from threading import Thread, Event
 import subprocess
 from datetime import datetime
@@ -15,6 +16,7 @@ from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Image, Imu
 from std_msgs.msg import String
 from std_msgs.msg import Float64MultiArray
+from actuation_msgs.msg import MotorCommand
 from motor_interfaces.msg import MotorState
 from leg_control_msgs.msg import *
 from robot_localization.srv import SetPose
@@ -86,6 +88,7 @@ class SELQIE(Node):
         self._motor_cmd_publishers = []
         self._motor_special_publishers = []
         self._motor_states = [MotorState() for _ in range(self.NUM_MOTORS)]
+        self._motor_commands = [MotorCommand() for _ in range(self.NUM_MOTORS)]
         self._motor_errors = [String() for _ in range(self.NUM_MOTORS)]
 
         for i in range(self.NUM_MOTORS):
@@ -99,6 +102,11 @@ class SELQIE(Node):
             motor_state_callback = lambda msg, i=i: self._motor_states.__setitem__(i, msg)
             self.create_subscription(
                 MotorState, f'/motor{i}/motor_state', motor_state_callback, QOS_FAST()
+            )
+
+            motor_command_callback = lambda msg, i=i: self._motor_commands.__setitem__(i, msg)
+            self.create_subscription(
+                MotorCommand, f'/motor{i}/command', motor_command_callback, QOS_FAST()
             )
 
             motor_error_callback = lambda msg, i=i: self._motor_errors.__setitem__(i, msg)
@@ -239,6 +247,107 @@ class SELQIE(Node):
     def set_motor_clear_errors(self, motor_idx : int):
         """Clear motor faults and hold neutral command."""
         self.send_motor_special_command(motor_idx, 'clear')
+
+
+    def set_cubemars_position_gains(self, p_gain : float, d_gain : float, motors : list[int] | None = None):
+        """Update CubeMars motor-node MIT position gains at runtime."""
+        if motors is None:
+            motors = list(range(self.NUM_MOTORS))
+        for motor_idx in motors:
+            if motor_idx < 0 or motor_idx >= self.NUM_MOTORS:
+                raise ValueError(f"Motor index {motor_idx} out of range")
+            node = f'/motor{motor_idx}_node'
+            for name, value in (('position_kp', p_gain), ('position_kd', d_gain)):
+                subprocess.run(
+                    ['ros2', 'param', 'set', node, name, str(float(value))],
+                    check=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+
+    def autotune_cubemars_position_gains(
+        self,
+        trajectory_file : str,
+        frequency : float = 0.5,
+        kp_candidates : list[float] | None = None,
+        kd_candidates : list[float] | None = None,
+        loops : int = 1,
+        sample_hz : float = 50.0,
+        settle_time : float = 0.5,
+        velocity_weight : float = 0.002,
+        current_weight : float = 0.01,
+        max_current : float = 8.0,
+        current_limit_weight : float = 10.0,
+        ready_motors : bool = True,
+    ) -> dict:
+        """Sweep CubeMars position gains on an existing gait and keep the best pair.
+
+        The score combines motor position tracking error with small penalties for
+        measured velocity and current. Lower scores are better. This method sends
+        the CubeMars `start` special command by default because MIT motors will not
+        move unless they are in MIT control mode.
+        """
+        if kp_candidates is None:
+            kp_candidates = [0.5, 1.0, 2.0, 4.0, 8.0]
+        if kd_candidates is None:
+            kd_candidates = [0.0, 0.02, 0.05, 0.1, 0.2]
+        if ready_motors:
+            for motor_idx in range(self.NUM_MOTORS):
+                self.set_motor_ready(motor_idx)
+
+        trajectories = self.get_leg_trajectories_from_file(trajectory_file, frequency)
+        rate = self.create_rate(sample_hz)
+        best = None
+        results = []
+
+        for kp in kp_candidates:
+            for kd in kd_candidates:
+                self.set_cubemars_position_gains(kp, kd)
+                time.sleep(settle_time)
+                samples = []
+                for _ in range(loops):
+                    self.run_leg_trajectories(trajectories)
+                    end_time = time.monotonic() + (1.0 / frequency)
+                    while time.monotonic() < end_time:
+                        for motor_idx, state in enumerate(self._motor_states):
+                            command = self._motor_commands[motor_idx]
+                            if command.control_mode != MotorCommand.CONTROL_MODE_POSITION:
+                                continue
+                            error = float(command.pos_setpoint) - float(state.abs_position)
+                            samples.append((error, float(state.velocity), float(state.current)))
+                        rate.sleep()
+
+                if not samples:
+                    score = math.inf
+                    metrics = {'samples': 0}
+                else:
+                    errors = [sample[0] for sample in samples]
+                    velocities = [sample[1] for sample in samples]
+                    currents = [sample[2] for sample in samples]
+                    rms_error = math.sqrt(sum(error * error for error in errors) / len(errors))
+                    rms_velocity = math.sqrt(sum(velocity * velocity for velocity in velocities) / len(velocities))
+                    rms_current = math.sqrt(sum(current * current for current in currents) / len(currents))
+                    peak_current = max(abs(current) for current in currents)
+                    score = rms_error + velocity_weight * rms_velocity + current_weight * rms_current
+                    if peak_current > max_current:
+                        score += (peak_current - max_current) * current_limit_weight
+                    metrics = {
+                        'samples': len(samples),
+                        'rms_error': rms_error,
+                        'rms_velocity': rms_velocity,
+                        'rms_current': rms_current,
+                        'peak_current': peak_current,
+                    }
+
+                result = {'kp': kp, 'kd': kd, 'score': score, 'metrics': metrics}
+                results.append(result)
+                if best is None or score < best['score']:
+                    best = result
+
+        if best is not None and math.isfinite(best['score']):
+            self.set_cubemars_position_gains(best['kp'], best['kd'])
+        return {'best': best, 'results': results}
 
     def send_motor_command(self, motor_idx : int, position : float, velocity : float, kp : float, kd : float, torque : float):
         """Send MIT command [position, velocity, kp, kd, torque]."""
