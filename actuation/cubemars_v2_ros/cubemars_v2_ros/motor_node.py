@@ -10,7 +10,9 @@ The node publishes motor state data including position, velocity, torque,
 temperature, and error codes, and subscribes to command topics for motor control.
 """
 
+import math
 import threading
+import time
 
 import can
 import rclpy
@@ -299,6 +301,9 @@ class MotorNode(Node):
         self.declare_parameter("position_kp", 20.0)  # Kp for MotorCommand position mode
         self.declare_parameter("position_kd", 1.0)  # Kd for MotorCommand position mode
         self.declare_parameter("velocity_kd", 1.0)  # Kd for MotorCommand velocity mode
+        self.declare_parameter(
+            "command_timeout", 1.0
+        )  # Seconds before stale velocity/torque commands go neutral
 
         # Get parameters
         self.iface = self.get_parameter("can_interface").value
@@ -320,6 +325,9 @@ class MotorNode(Node):
         self.position_kp = float(self.get_parameter("position_kp").value)
         self.position_kd = float(self.get_parameter("position_kd").value)
         self.velocity_kd = float(self.get_parameter("velocity_kd").value)
+        self.command_timeout = max(
+            0.0, float(self.get_parameter("command_timeout").value)
+        )
 
         # Log parameters for debugging
         self.get_logger().info(
@@ -333,6 +341,7 @@ class MotorNode(Node):
             Position Kp: {self.position_kp}
             Position Kd: {self.position_kd}
             Velocity Kd: {self.velocity_kd}
+            Command Timeout: {self.command_timeout}
             """
         )
 
@@ -379,6 +388,9 @@ class MotorNode(Node):
         # ---- Internal State ----
         self._lock = threading.Lock()  # Thread safety for command access
         self.cmd = [0.0, 0.0, 0.0, 0.0, 0.0]  # Current command [p, v, kp, kd, t]
+        self._last_cmd_time = time.monotonic()  # Used to stop stale commands safely
+        self._stale_command_warned = False
+        self._cmd_control_mode = "neutral"
         self._started = False  # Whether the motor is started
         self._neutral_hold = (
             False  # When True, sends zero commands regardless of cmd cache
@@ -419,7 +431,10 @@ class MotorNode(Node):
             return
 
         with self._lock:
-            self.cmd = list(map(float, msg.data))
+            self.cmd = self._sanitize_command(list(map(float, msg.data)))
+            self._last_cmd_time = time.monotonic()
+            self._stale_command_warned = False
+            self._cmd_control_mode = "mit"
             self._neutral_hold = False  # New command cancels any previous "clear" hold
 
         # Auto-start the motor on first command if not already started
@@ -448,15 +463,18 @@ class MotorNode(Node):
         if msg.control_mode == MotorCommand.CONTROL_MODE_POSITION:
             kp = self.position_kp
             kd = self.position_kd
+            cmd_control_mode = "position"
         elif msg.control_mode == MotorCommand.CONTROL_MODE_VELOCITY:
             p = 0.0
             kp = 0.0
             kd = self.velocity_kd
+            cmd_control_mode = "velocity"
         elif msg.control_mode == MotorCommand.CONTROL_MODE_TORQUE:
             p = 0.0
             v = 0.0
             kp = 0.0
             kd = 0.0
+            cmd_control_mode = "torque"
         else:
             self.get_logger().warn(
                 f"Unsupported MotorCommand control_mode {msg.control_mode}; command ignored"
@@ -464,7 +482,10 @@ class MotorNode(Node):
             return
 
         with self._lock:
-            self.cmd = [p, v, kp, kd, t]
+            self.cmd = self._sanitize_command([p, v, kp, kd, t])
+            self._last_cmd_time = time.monotonic()
+            self._stale_command_warned = False
+            self._cmd_control_mode = cmd_control_mode
             self._neutral_hold = False  # New command cancels any previous "clear" hold
 
     def on_special(self, msg):
@@ -499,6 +520,9 @@ class MotorNode(Node):
             # Clear all commands (send zeros and hold)
             with self._lock:
                 self.cmd = [0.0, 0.0, 0.0, 0.0, 0.0]  # Clear command cache
+                self._last_cmd_time = time.monotonic()
+                self._stale_command_warned = False
+                self._cmd_control_mode = "neutral"
                 self._neutral_hold = True  # Hold zeros until new command
 
             # Send zero command immediately
@@ -510,12 +534,56 @@ class MotorNode(Node):
                 f"Unknown special command: '{m}'. Valid options: start|exit|zero|clear"
             )
 
+    def _sanitize_command(self, cmd):
+        """Clamp command values to motor limits and reject non-finite values."""
+        names = ("position", "velocity", "kp", "kd", "torque")
+        bounds = (
+            (self.R["P_MIN"], self.R["P_MAX"]),
+            (self.R["V_MIN"], self.R["V_MAX"]),
+            (self.R["KP_MIN"], self.R["KP_MAX"]),
+            (self.R["KD_MIN"], self.R["KD_MAX"]),
+            (self.R["T_MIN"], self.R["T_MAX"]),
+        )
+
+        sanitized = []
+        for name, value, (lo, hi) in zip(names, cmd, bounds):
+            if not math.isfinite(value):
+                self.get_logger().warn(
+                    f"Ignoring non-finite {name} command for {self.joint_name}; using 0.0"
+                )
+                value = 0.0
+
+            clamped = clamp(value, lo, hi)
+            if clamped != value:
+                self.get_logger().warn(
+                    f"Clamped {name} command for {self.joint_name} from {value} to {clamped}"
+                )
+            sanitized.append(clamped)
+
+        return sanitized
+
     # ---- Control Loop ----
     def _tick_control(self):
         """Periodic control loop that sends commands to the motor"""
         with self._lock:
-            # If in neutral hold mode, send zeros; otherwise send cached command
-            p, v, kp, kd, t = ([0.0] * 5) if self._neutral_hold else self.cmd
+            # If in neutral hold mode, send zeros; otherwise send cached command.
+            # Stale position commands are intentionally held because trajectory
+            # publishers can send sparse waypoints; only stale open-loop style
+            # velocity/torque/MIT commands are forced to neutral output.
+            stale = (
+                self.command_timeout > 0.0
+                and time.monotonic() - self._last_cmd_time > self.command_timeout
+            )
+            should_neutralize_stale = stale and self._cmd_control_mode != "position"
+            if should_neutralize_stale and not self._neutral_hold:
+                if not self._stale_command_warned:
+                    self.get_logger().warn(
+                        f"No fresh {self._cmd_control_mode} command for {self.command_timeout:.3f}s; sending neutral output to {self.joint_name}"
+                    )
+                    self._stale_command_warned = True
+                p, v, kp, kd, t = [0.0] * 5
+            else:
+                p, v, kp, kd, t = ([0.0] * 5) if self._neutral_hold else self.cmd
 
         # Apply reverse polarity if configured
         if self.reverse_polarity:
