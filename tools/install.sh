@@ -147,9 +147,10 @@ if [ "$DEVEL_FLAG" = false ]; then
     # Configure 40-pin header pin functions via Jetson-IO device tree overlay:
     #   can0   → pins 29, 31  (CAN0 DIN/DOUT)
     #   can1   → pins 33, 37  (CAN1 DIN/DOUT)
+    #   pwm0   → pin  32      (D954SW servo latch)
     #   pwm5   → pin  18      (Lights PWM)
     #   spi1   → pins 19, 21, 23, 24  (WS2812B MOSI/MISO/CLK/CS0 — only MOSI wired)
-    sudo /opt/nvidia/jetson-io/config-by-function.py -o dt can0 can1 pwm5 spi1
+    sudo /opt/nvidia/jetson-io/config-by-function.py -o dt can0 can1 pwm0 pwm5 spi1
 fi
 
 echo "Setup complete!"

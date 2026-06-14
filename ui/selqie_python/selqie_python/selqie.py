@@ -11,7 +11,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy
 from ament_index_python.packages import get_package_share_directory
 
-from std_msgs.msg import Empty, Float32, String, UInt32MultiArray
+from std_msgs.msg import Bool, Empty, Float32, String, UInt32MultiArray
 from geometry_msgs.msg import Twist, PoseStamped, PoseWithCovarianceStamped, Quaternion
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Image, Imu
@@ -79,6 +79,7 @@ class SELQIE(Node):
         self.init_control()
         self.init_vision()
         self.init_led()
+        self.init_servo()
         self.init_recording()
 
     def init_motors(self):
@@ -208,6 +209,10 @@ class SELQIE(Node):
     def init_led(self):
         """Initialize the WS2812B LED publisher."""
         self._led_pub = self.create_publisher(UInt32MultiArray, 'led_colors', QOS_RELIABLE())
+
+    def init_servo(self):
+        """Initialize the latch servo publisher."""
+        self._latch_pub = self.create_publisher(Bool, 'servo/latch', QOS_RELIABLE())
 
     def init_recording(self):
         self.ROSBAG_RECORD_TOPICS = ["motor0/motor_state", "motor1/motor_state", "motor2/motor_state", "motor3/motor_state", "motor4/motor_state", "motor5/motor_state", "motor6/motor_state", "motor7/motor_state",
@@ -538,6 +543,22 @@ class SELQIE(Node):
     def set_led_off(self):
         """Turn the WS2812B LED off."""
         self.set_led_color(0, 0, 0)
+
+    ##########################
+    ### Servo / Latch Functions ###
+    ##########################
+
+    def latch_open(self):
+        """Open the latch servo."""
+        msg = Bool()
+        msg.data = True
+        self._latch_pub.publish(msg)
+
+    def latch_close(self):
+        """Close the latch servo."""
+        msg = Bool()
+        msg.data = False
+        self._latch_pub.publish(msg)
 
     ################################
     ### Data Recording Functions ###

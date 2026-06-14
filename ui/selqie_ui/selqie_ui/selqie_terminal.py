@@ -222,6 +222,14 @@ class SELQIETerminal(Cmd):
         """ Turn the WS2812B LED off """
         self._selqie.set_led_off()
 
+    def do_latch_open(self, line : str):
+        """ Open the latch servo """
+        self._selqie.latch_open()
+
+    def do_latch_close(self, line : str):
+        """ Close the latch servo """
+        self._selqie.latch_close()
+
     def do_set_gait(self, line : str):
         """ Set the gait for the robot """
         args = line.split()

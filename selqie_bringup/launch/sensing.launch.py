@@ -22,6 +22,7 @@ def generate_launch_description():
         SensingLaunch('ws2812b.launch.py'),
         SensingLaunch('leak_sensor.launch.py'),
         SensingLaunch('reed_switch.launch.py'),
+        SensingLaunch('servo.launch.py'),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(BATTERY_LAUNCH_FILE)
         ),
