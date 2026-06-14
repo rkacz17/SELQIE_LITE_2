@@ -5,7 +5,7 @@
 walk_stride_node:
   ros__parameters:
     leg_command_rate: 500.0
-    robot_width: 0.25
+    robot_width: 0.1905  # 7.5 in body width
     walking_height: 0.175
     center_shift: -0.25
     step_height: 0.025
