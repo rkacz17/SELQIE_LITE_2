@@ -33,7 +33,7 @@ Each motor receives a five-tuple command every control cycle:
 | Parameter | Range | Description |
 |-----------|-------|-------------|
 | `p_des` | ±12.5 rad | Desired position |
-| `v_des` | ±50 rad/s | Desired velocity |
+| `v_des` | ±45.5 rad/s (AK40-10) | Desired velocity |
 | `Kp` | 0 – 500 | Position gain |
 | `Kd` | 0 – 5 | Velocity (damping) gain |
 | `τ_ff` | ±T_MAX | Feed-forward torque |
@@ -47,7 +47,7 @@ Unlike ODrive, the CubeMars motor applies this formula **onboard** with no filte
 | Model | V_MAX (rad/s) | T_MAX (Nm) |
 |-------|--------------|------------|
 | AK10-9 | ±50 | ±65 |
-| AK40-10 | ±50 | ±65 |
+| AK40-10 | ±45.5 | ±5 |
 | AK60-6 | ±45 | ±15 |
 | AK70-10 | ±50 | ±25 |
 | AK80-6 | ±76 | ±12 |

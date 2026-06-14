@@ -85,7 +85,7 @@ The tmux script opens four panes:
 | 6 | can0 | FR | Inner shaft | Reversed |
 | 7 | can0 | FR | Outer shaft | Normal |
 
-Motor type: **CubeMars AK40-10** — MIT (Mini Cheetah) protocol, T_MAX = 65 Nm
+Motor type: **CubeMars AK40-10** — MIT (Mini Cheetah) protocol, T_MAX = 5 Nm
 
 ### Jetson AGX Orin 40-Pin Header
 
