@@ -86,6 +86,7 @@ class SELQIE(Node):
         # applies the position/velocity gains configured in the launch file.
         self.DEFAULT_MOTOR_GAINS = (0.0, 0.0)
 
+        self._motor_position_gains = [list(self.DEFAULT_MOTOR_GAINS) for _ in range(self.NUM_MOTORS)]
         self._motor_cmd_publishers = []
         self._motor_special_publishers = []
         self._motor_states = [MotorState() for _ in range(self.NUM_MOTORS)]
