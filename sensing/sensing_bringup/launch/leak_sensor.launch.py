@@ -10,7 +10,7 @@ def generate_launch_description():
             name='leak_sensor_node',
             output='screen',
             parameters=[{
-                'gpio_pin': 29,     # BOARD pin 29 = SOC_GPIO01 on Orin AGX (no conflicts)
+                'gpio_pin': 15,     # BOARD pin 15 = SOC_GPIO27 on Orin AGX (no conflicts)
                 'frequency': 10.0,  # Hz
                 'active_high': True,
             }],

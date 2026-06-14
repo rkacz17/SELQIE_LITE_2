@@ -127,6 +127,11 @@ if [ "$DEVEL_FLAG" = false ]; then
     sudo usermod -a -G gpio ${USER}
     sudo cp ${SELQIE_WS}/src/tools/99-gpio.rules /etc/udev/rules.d/
 
+    # Setup SPI device permissions (for WS2812B)
+    sudo groupadd -f spi
+    sudo usermod -a -G spi ${USER}
+    echo 'SUBSYSTEM=="spidev", GROUP="spi", MODE="0660"' | sudo tee /etc/udev/rules.d/99-spi.rules > /dev/null
+
     # Setup CAN Boot Service
     sudo cp ${SELQIE_WS}/src/tools/load_can.service /etc/systemd/system/
     sudo systemctl daemon-reload
@@ -139,8 +144,12 @@ if [ "$DEVEL_FLAG" = false ]; then
     # Reload udev rules
     sudo udevadm control --reload-rules && sudo udevadm trigger
 
-    # Setup GPIO Configuration
-    sudo /opt/nvidia/jetson-io/config-by-function.py -o dt can0 can1 pwm5
+    # Configure 40-pin header pin functions via Jetson-IO device tree overlay:
+    #   can0   → pins 29, 31  (CAN0 DIN/DOUT)
+    #   can1   → pins 33, 37  (CAN1 DIN/DOUT)
+    #   pwm5   → pin  18      (Lights PWM)
+    #   spi1   → pins 19, 21, 23, 24  (WS2812B MOSI/MISO/CLK/CS0 — only MOSI wired)
+    sudo /opt/nvidia/jetson-io/config-by-function.py -o dt can0 can1 pwm5 spi1
 fi
 
 echo "Setup complete!"
