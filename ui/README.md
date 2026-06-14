@@ -74,6 +74,13 @@ Type `help` at the prompt to list all commands. Type `help <command>` for detail
 | `set_led_color` | `<r> <g> <b>` | Set WS2812B color (0–255 each channel) |
 | `led_off` | — | Turn LED off (equivalent to `set_led_color 0 0 0`) |
 
+### Latch Servo Commands
+
+| Command | Arguments | Description |
+|---------|-----------|-------------|
+| `latch_open` | — | Drive D954SW servo to open position |
+| `latch_close` | — | Drive D954SW servo to closed position |
+
 ### System
 
 | Command | Arguments | Description |
@@ -132,6 +139,13 @@ robot.get_leg_estimate(leg_name)             # Returns LegEstimate
 ```python
 robot.set_led_color(r, g, b)   # r,g,b: int 0–255
 robot.set_led_off()
+```
+
+### Latch Servo Methods
+
+```python
+robot.latch_open()    # drives D954SW to open position
+robot.latch_close()   # drives D954SW to closed position
 ```
 
 ### Sensor Methods

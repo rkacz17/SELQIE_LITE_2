@@ -1,6 +1,6 @@
 # Sensing
 
-All environmental sensor nodes for SELQIE Lite 2: depth (BAR100), RGB LED feedback (WS2812B), water-ingress detection (leak sensor), hull door detection (reed switch), and battery monitoring (TinyBMS).
+All environmental sensor and peripheral nodes for SELQIE Lite 2: depth (BAR100), RGB LED feedback (WS2812B), water-ingress detection (leak sensor), hull door detection (reed switch), latch servo (D954SW), and battery monitoring (TinyBMS).
 
 ---
 
@@ -14,11 +14,13 @@ sensing/
 │       ├── ws2812b.launch.py
 │       ├── leak_sensor.launch.py
 │       ├── reed_switch.launch.py
+│       ├── servo.launch.py
 │       └── imu.launch.py       # (disabled — requires hardware)
 ├── bar100_driver/              # Depth sensor (I2C)
 ├── ws2812b_ros/                # RGB LED driver (SPI)
 ├── leak_sensor/                # Water-ingress GPIO sensor
 ├── reed_switch/                # Magnetic reed switch GPIO sensor
+├── servo/                      # D954SW R/C latch servo (PWM)
 └── imu_calibration/            # IMU calibration utilities
 ```
 
@@ -167,8 +169,6 @@ Use cases: detecting hull panel closure (magnet on the lid), triggering autonomo
 
 | Pin | Signal | Use |
 |-----|--------|-----|
-| 35 | GPIO | Leak sensor input |
-| 38 | GPIO | Reed switch input |
 | 18 | PWM5 | Camera / lights PWM |
 | 19 | SPI1_MOSI | WS2812B data signal |
 | 21 | SPI1_MISO | (not connected) |
@@ -176,13 +176,71 @@ Use cases: detecting hull panel closure (magnet on the lid), triggering autonomo
 | 24 | SPI1_CS0 | (not connected) |
 | 29 | CAN0_DIN | Motor CAN bus (FL, FR) |
 | 31 | CAN0_DOUT | Motor CAN bus (FL, FR) |
+| 32 | PWM0 | D954SW latch servo signal |
 | 33 | CAN1_DIN | Motor CAN bus (RL, RR) |
+| 35 | GPIO | Leak sensor input |
 | 37 | CAN1_DOUT | Motor CAN bus (RL, RR) |
+| 38 | GPIO | Reed switch input |
 
 These functions are configured automatically by `tools/install.sh` using:
 ```bash
-sudo /opt/nvidia/jetson-io/config-by-function.py -o dt can0 can1 pwm5 spi1
+sudo /opt/nvidia/jetson-io/config-by-function.py -o dt can0 can1 pwm0 pwm5 spi1
 ```
+
+---
+
+## Latch Servo (D954SW)
+
+**Hardware:** D954SW R/C servo connected to **Pin 32 (PWM0)**. Used to actuate a mechanical latch on the robot hull.
+
+**Driver:** `servo/servo_node.py` drives the servo via Jetson GPIO hardware PWM at 50 Hz. Boots in the closed position.
+
+### Node Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `gpio_pin` | `32` | BOARD pin number (PWM0) |
+| `frequency` | `50.0` | PWM frequency in Hz (standard RC servo) |
+| `open_duty_cycle` | `5.0` | Duty cycle % for open position (1.0 ms pulse) |
+| `close_duty_cycle` | `10.0` | Duty cycle % for closed position (2.0 ms pulse) |
+
+### Subscribed Topic
+
+| Topic | Type | Description |
+|-------|------|-------------|
+| `servo/latch` | `Bool` | `true` = open latch, `false` = close latch |
+
+### Control
+
+From `selqie_terminal`:
+```
+latch_open    ← drives servo to open position
+latch_close   ← drives servo to closed position
+```
+
+From Python (`selqie.py`):
+```python
+robot.latch_open()
+robot.latch_close()
+```
+
+From the command line:
+```bash
+ros2 topic pub --once servo/latch std_msgs/msg/Bool "data: true"   # open
+ros2 topic pub --once servo/latch std_msgs/msg/Bool "data: false"  # close
+```
+
+### Duty Cycle Tuning
+
+Standard RC servo pulse widths at 50 Hz (20 ms period):
+
+| Pulse | Duty cycle | Typical angle |
+|-------|-----------|--------------|
+| 1.0 ms | 5.0% | 0° (open) |
+| 1.5 ms | 7.5% | 90° (center) |
+| 2.0 ms | 10.0% | 180° (closed) |
+
+Adjust `open_duty_cycle` and `close_duty_cycle` in `sensing_bringup/launch/servo.launch.py` to match the physical travel of your latch.
 
 ---
 

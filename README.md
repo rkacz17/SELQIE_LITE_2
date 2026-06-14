@@ -105,6 +105,7 @@ Motor type: **CubeMars AK40-10** — MIT (Mini Cheetah) protocol, T_MAX = 5 Nm
 | 33, 37 | CAN1 DIN/DOUT | Motor CAN bus (RL, RR motors) |
 | 18 | PWM5 | Camera / underwater lights |
 | 19, 21, 23, 24 | SPI1 MOSI/MISO/CLK/CS0 | WS2812B LED (only MOSI wired) |
+| 32 | PWM0 | D954SW latch servo |
 | 35 | GPIO | Leak sensor input |
 | 38 | GPIO | Reed switch input |
 
@@ -122,6 +123,7 @@ Motor type: **CubeMars AK40-10** — MIT (Mini Cheetah) protocol, T_MAX = 5 Nm
 | `/leg_{FL,RL,RR,FR}/estimate` | `LegEstimate` | Cartesian leg endpoint feedback |
 | `leak/detected` | `Bool` | True when water ingress detected |
 | `reed_switch/closed` | `Bool` | True when magnet is present |
+| `servo/latch` | `Bool` | True=latch open, False=latch closed |
 | `led_colors` | `UInt32MultiArray` | Packed 0xRRGGBB for each WS2812B pixel |
 | `/battery/voltage` | `Float32` | Battery voltage from TinyBMS |
 | `/bar100/depth` | `Float64` | Depth in metres |
