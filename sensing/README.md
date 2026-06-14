@@ -109,7 +109,7 @@ sudo usermod -a -G spi $USER
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `gpio_pin` | `15` | BOARD pin number |
+| `gpio_pin` | `35` | BOARD pin number |
 | `frequency` | `10.0` | Poll rate in Hz |
 | `active_high` | `true` | `true` = pin HIGH means leak present |
 
@@ -137,7 +137,7 @@ Use cases: detecting hull panel closure (magnet on the lid), triggering autonomo
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `gpio_pin` | `16` | BOARD pin number |
+| `gpio_pin` | `38` | BOARD pin number |
 | `frequency` | `50.0` | Poll rate in Hz |
 | `active_high` | `true` | `true` = pin HIGH means switch closed |
 
@@ -167,8 +167,8 @@ Use cases: detecting hull panel closure (magnet on the lid), triggering autonomo
 
 | Pin | Signal | Use |
 |-----|--------|-----|
-| 15 | SOC_GPIO27 | Leak sensor input |
-| 16 | SOC_GPIO08 | Reed switch input |
+| 35 | GPIO | Leak sensor input |
+| 38 | GPIO | Reed switch input |
 | 18 | PWM5 | Camera / lights PWM |
 | 19 | SPI1_MOSI | WS2812B data signal |
 | 21 | SPI1_MISO | (not connected) |

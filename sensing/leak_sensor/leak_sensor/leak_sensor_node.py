@@ -14,7 +14,7 @@ class LeakSensorNode(Node):
     def __init__(self):
         super().__init__('leak_sensor_node')
 
-        self.declare_parameter('gpio_pin', 15)
+        self.declare_parameter('gpio_pin', 35)
         self.declare_parameter('frequency', 10.0)
         self.declare_parameter('active_high', True)
 

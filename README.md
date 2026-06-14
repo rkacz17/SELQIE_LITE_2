@@ -105,8 +105,8 @@ Motor type: **CubeMars AK40-10** — MIT (Mini Cheetah) protocol, T_MAX = 5 Nm
 | 33, 37 | CAN1 DIN/DOUT | Motor CAN bus (RL, RR motors) |
 | 18 | PWM5 | Camera / underwater lights |
 | 19, 21, 23, 24 | SPI1 MOSI/MISO/CLK/CS0 | WS2812B LED (only MOSI wired) |
-| 15 | GPIO (SOC_GPIO27) | Leak sensor input |
-| 16 | GPIO (SOC_GPIO08) | Reed switch input |
+| 35 | GPIO | Leak sensor input |
+| 38 | GPIO | Reed switch input |
 
 ---
 
