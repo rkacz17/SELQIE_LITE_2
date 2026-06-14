@@ -29,6 +29,20 @@ class SELQIETerminal(Cmd):
         """ Idle the Cubemars motors """
         for i in range(self._selqie.NUM_MOTORS):
             self._selqie.set_motor_idle(i)
+            
+    def do_battery(self, line: str) -> None:
+        """Print the latest battery voltage reading. Usage: battery"""
+        if line.strip():
+            print('Usage: battery')
+            return
+
+        voltage, stamp = self._selqie.snapshot_battery_voltage()
+        if voltage is None or stamp is None:
+            print('No battery voltage messages received yet.')
+            return
+
+        age_s = time.time() - stamp
+        print(f'Battery voltage: {voltage:.2f} V (age {age_s:.1f}s)')
 
     def do_ready(self, line : str):
         """ Ready the Cubemars motors """
@@ -41,9 +55,10 @@ class SELQIETerminal(Cmd):
             self._selqie.set_motor_clear_errors(i)
 
     def do_zero(self, line : str):
-        """ Zero the motors """
+        """ Set each Cubemars motor's current position to zero """
+        _ = line
         for i in range(self._selqie.NUM_MOTORS):
-            self._selqie.set_motor_position(i, 0.0)
+            self._selqie.set_motor_position_zero(i)
 
     def do_set_motor_position(self, line : str):
         """ Set the position of a motor """
@@ -69,9 +84,7 @@ class SELQIETerminal(Cmd):
             print("Invalid gain values")
 
     def do_default(self, line : str):
-        """ Set default motor gains and leg positions """
-        for i in range(self._selqie.NUM_MOTORS):
-            self._selqie.set_motor_gains_default(i)
+        """ Keep launch-file motor gains and set default leg positions """
         for i in range(self._selqie.NUM_LEGS):
             self._selqie.set_leg_position_default(i)
 

@@ -9,13 +9,19 @@ BAR100_LAUNCH_FILE = os.path.join(
 
 IMU_LAUNCH_FILE = os.path.join(
         get_package_share_directory('sensing_bringup'), 'launch', 'imu.launch.py')
+        
+BATTERY_LAUNCH_FILE = os.path.join(
+        get_package_share_directory('battery'), 'launch', 'tinybms_voltage_uart.launch.py')
 
 def generate_launch_description():
     return LaunchDescription([
-        # IncludeLaunchDescription(
-        #     PythonLaunchDescriptionSource(BAR100_LAUNCH_FILE)
-        # ),
-        IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(IMU_LAUNCH_FILE)
+         IncludeLaunchDescription(
+             PythonLaunchDescriptionSource(BAR100_LAUNCH_FILE)
+         ),
+         IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(BATTERY_LAUNCH_FILE)
         ),
+        #IncludeLaunchDescription(
+        #    PythonLaunchDescriptionSource(IMU_LAUNCH_FILE)
+        #),
     ])
