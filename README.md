@@ -72,6 +72,16 @@ The tmux script opens four panes:
 
 ## Hardware Overview
 
+### Physical Specifications
+
+| Dimension | Imperial | Metric |
+|-----------|----------|--------|
+| Length | 22 in | 0.5588 m |
+| Width | 7.5 in | 0.1905 m |
+| Height (body) | 3.5 in | 0.0889 m |
+
+The IMU is mounted at the center of mass, which is the geometric center of the body. In the ROS2 TF tree this corresponds to `base_link` origin with the `imu_link` transform at `[0, 0, 0]`.
+
 ### Motors
 
 | Motor ID | CAN Bus | Leg | Position | Polarity |
