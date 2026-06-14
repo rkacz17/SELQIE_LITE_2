@@ -144,6 +144,38 @@ class SELQIE(Node):
         self._water_temperature = Float32()
         temperature_callback = lambda msg: setattr(self, '_water_temperature', msg)
         self._temperature_sub = self.create_subscription(Float32, 'bar100/temperature', temperature_callback, QOS_RELIABLE())
+        
+        self._battery_voltage: Optional[float] = None
+        self._battery_voltage_stamp: Optional[float] = None
+        
+        self.create_subscription(
+            Float32,
+            '/tinybms/pack_voltage',
+            self._on_battery_voltage,
+            10,
+        )
+        
+    def snapshot_battery_voltage(self) -> tuple[Optional[float], Optional[float]]:
+        with self._lock:
+            return self._battery_voltage, self._battery_voltage_stamp
+        
+    def _on_battery_voltage(self, msg: Float32) -> None:
+        with self._lock:
+            self._battery_voltage = msg.data
+            self._battery_voltage_stamp = time.time()
+            
+    def battery_voltage(self, line: str) -> None:
+        if line.strip():
+            print('Usage: battery')
+            return
+            
+        voltage, stamp = self._console.snapshot_battery_voltage()
+        if voltage is None or stamp is None:
+            print('No battery voltage messages received yet.')
+            return
+
+        age_s = time.time() - stamp
+        print(f'Battery voltage: {voltage:.2f} V (age {age_s:.1f}s)')
 
     def init_localization(self):
         """Initialize the localization publishers and subscribers."""

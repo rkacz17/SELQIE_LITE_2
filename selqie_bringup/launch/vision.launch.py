@@ -21,11 +21,11 @@ def generate_launch_description():
     playback_mode = LaunchConfiguration('playback_mode')
     
     return LaunchDescription([
-        playback_mode_arg,
-        IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(STEREO_USB_CAM_LAUNCH_FILE),
-            launch_arguments={'playback_mode': playback_mode}.items()
-        ),
+        #playback_mode_arg,
+        #IncludeLaunchDescription(
+        #    PythonLaunchDescriptionSource(STEREO_USB_CAM_LAUNCH_FILE),
+        #    launch_arguments={'playback_mode': playback_mode}.items()
+        #),
         Node(
             package='jetson_drivers',
             executable='gpio_node',

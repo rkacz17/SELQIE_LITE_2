@@ -29,6 +29,10 @@ class SELQIETerminal(Cmd):
         """ Idle the Cubemars motors """
         for i in range(self._selqie.NUM_MOTORS):
             self._selqie.set_motor_idle(i)
+            
+    def do_battery(self, line: str) -> None:
+        """Print the latest battery voltage reading. Usage: battery"""
+        self.battery_voltage(line)
 
     def do_ready(self, line : str):
         """ Ready the Cubemars motors """
