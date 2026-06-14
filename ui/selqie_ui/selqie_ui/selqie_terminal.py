@@ -32,7 +32,17 @@ class SELQIETerminal(Cmd):
             
     def do_battery(self, line: str) -> None:
         """Print the latest battery voltage reading. Usage: battery"""
-        self.battery_voltage(line)
+        if line.strip():
+            print('Usage: battery')
+            return
+
+        voltage, stamp = self._selqie.snapshot_battery_voltage()
+        if voltage is None or stamp is None:
+            print('No battery voltage messages received yet.')
+            return
+
+        age_s = time.time() - stamp
+        print(f'Battery voltage: {voltage:.2f} V (age {age_s:.1f}s)')
 
     def do_ready(self, line : str):
         """ Ready the Cubemars motors """
