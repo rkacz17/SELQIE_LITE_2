@@ -3,6 +3,7 @@ from launch import LaunchDescription
 from launch.actions import IncludeLaunchDescription, DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
 
 TERRAIN_MAPPING_LAUNCH_FILE = os.path.join(
@@ -17,7 +18,7 @@ def generate_launch_description():
     )
     # Get the use sim time from the launch configuration
     use_sim_time = LaunchConfiguration('use_sim_time')
-    
+
     return LaunchDescription([
         sim_time_arg,
         IncludeLaunchDescription(
@@ -25,5 +26,15 @@ def generate_launch_description():
             launch_arguments={
                 'use_sim_time': use_sim_time
             }.items()
-        )
+        ),
+        # Relay the full ZED depth cloud to the obstacles layer in terrain_mapping.
+        # This feeds every detected 3-D point into the obstacle grid without colour
+        # filtering, giving the planner awareness of all objects in the ZED's FoV.
+        Node(
+            package='topic_tools',
+            executable='relay',
+            name='zed_obstacles_relay',
+            output='screen',
+            arguments=['stereo/points2', 'points/obstacles'],
+        ),
     ])
