@@ -57,14 +57,14 @@ class SELQIETerminal(Cmd):
             print("Invalid motor or position values")
 
     def do_set_gains(self, line : str):
-        """ Set the gains for the motors """
+        """ Set the gains for the motors: set_gains <p_gain> <v_gain> """
         args = line.split()
-        if len(args) != 3:
-            print("Usage: set_gains <p_gain> <v_gain> <vi_gain>")
+        if len(args) != 2:
+            print("Usage: set_gains <p_gain> <v_gain>")
             return
         try:
             for i in range(self._selqie.NUM_MOTORS):
-                self._selqie.set_motor_gains(i, float(args[0]), float(args[1]), float(args[2]))
+                self._selqie.set_motor_gains(i, float(args[0]), float(args[1]))
         except ValueError:
             print("Invalid gain values")
 

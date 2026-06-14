@@ -389,8 +389,8 @@ class SELQIE(Node):
         """Get the latest Odometry message."""
         return self._odom
     
-    def send_localization_set_pose(self, pose : PoseStamped):
-        """Send a PoseStamped message to the set_pose service."""
+    def send_localization_set_pose(self, pose : PoseWithCovarianceStamped):
+        """Send a PoseWithCovarianceStamped message to the set_pose service."""
         req = SetPose.Request()
         req.pose = pose
         self._set_pose_client.call_async(req)

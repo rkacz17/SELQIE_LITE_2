@@ -15,7 +15,7 @@ import threading
 import can
 import rclpy
 from rclpy.node import Node
-from actuation_msgs.msg import MotorCommand
+from actuation_msgs.msg import MotorCommand, MotorEstimate
 from std_msgs.msg import Float64MultiArray, String, Int32
 from motor_interfaces.msg import MotorState
 
@@ -349,9 +349,6 @@ class MotorNode(Node):
                 f"Failed to initialize CAN bus on interface '{self.iface}': {e}"
             )
             raise
-            self.bus.set_filters([{"can_id": self.arb, "can_mask": 0x7FF}])
-        except Exception:
-            pass  # Some interfaces don't support filtering
 
         # ---- ROS Publishers and Subscribers ----
         # Publishers
@@ -360,6 +357,9 @@ class MotorNode(Node):
         )
         self.pub_state = self.create_publisher(
             MotorState, f"/{self.joint_name}/motor_state", 10
+        )
+        self.pub_estimate = self.create_publisher(
+            MotorEstimate, f"/{self.joint_name}/estimate", 10
         )
 
         # Subscribers
@@ -649,9 +649,16 @@ class MotorNode(Node):
             ms.abs_position = self._p_abs  # Absolute position in rad (unwrapped)
             ms.velocity = v  # Velocity in rad/s
             ms.torque = tau  #  Torque in Nms
-            ms.current = tau * TORQUE_CONSTANTS[self.motor_type]  # current in A
+            ms.current = tau * TORQUE_CONSTANTS.get(self.motor_type, 0.0)  # current in A
             ms.temperature = temp  # Temperature in °C
             self.pub_state.publish(ms)
+
+            # Publish MotorEstimate for leg kinematics (uses abs_position for unwrapped angle)
+            me = MotorEstimate()
+            me.pos_estimate = self._p_abs
+            me.vel_estimate = v
+            me.torq_estimate = tau
+            self.pub_estimate.publish(me)
 
     def destroy_node(self):
         """Clean up resources when the node is shutting down"""
