@@ -14,7 +14,7 @@ class ReedSwitchNode(Node):
     def __init__(self):
         super().__init__('reed_switch_node')
 
-        self.declare_parameter('gpio_pin', 19)
+        self.declare_parameter('gpio_pin', 31)
         self.declare_parameter('frequency', 50.0)
         self.declare_parameter('active_high', True)
 
