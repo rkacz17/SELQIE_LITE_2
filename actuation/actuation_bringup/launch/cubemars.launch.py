@@ -13,6 +13,7 @@ def launch_setup(context, *args, **kwargs):
     position_kp = LaunchConfiguration('position_kp').perform(context)
     position_kd = LaunchConfiguration('position_kd').perform(context)
     velocity_kd = LaunchConfiguration('velocity_kd').perform(context)
+    cmd_timeout = LaunchConfiguration('cmd_timeout').perform(context)
 
     joint_name = f'motor{motor_id}'
 
@@ -32,6 +33,7 @@ def launch_setup(context, *args, **kwargs):
                 'position_kp': float(position_kp),
                 'position_kd': float(position_kd),
                 'velocity_kd': float(velocity_kd),
+                'cmd_timeout': float(cmd_timeout),
             }],
         ),
     ]
@@ -46,7 +48,7 @@ def generate_launch_description():
             'interface', default_value='can0', description='CAN interface name.'
         ),
         DeclareLaunchArgument(
-            'motor_type', default_value='AK70-10', description='Cubemars motor type.'
+            'motor_type', default_value='AK40-10', description='Cubemars motor type.'
         ),
         DeclareLaunchArgument(
             'control_hz', default_value='100.0', description='Control loop rate in Hz.'
@@ -56,18 +58,23 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'position_kp',
-            default_value='20.0',
-            description='MIT Kp used for /motorN/command position control.',
+            default_value='3.0',
+            description='MIT Kp used for /motorN/command position control (AK40-10: T_MAX=5Nm, keep low).',
         ),
         DeclareLaunchArgument(
             'position_kd',
-            default_value='1.0',
+            default_value='0.3',
             description='MIT Kd used for /motorN/command position control.',
         ),
         DeclareLaunchArgument(
             'velocity_kd',
-            default_value='1.0',
+            default_value='0.5',
             description='MIT Kd used for /motorN/command velocity control.',
+        ),
+        DeclareLaunchArgument(
+            'cmd_timeout',
+            default_value='0.5',
+            description='Seconds without a command before motor is zeroed (0 = disabled).',
         ),
         OpaqueFunction(function=launch_setup),
     ])

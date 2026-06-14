@@ -11,11 +11,12 @@ temperature, and error codes, and subscribes to command topics for motor control
 """
 
 import threading
+import time
 
 import can
 import rclpy
 from rclpy.node import Node
-from actuation_msgs.msg import MotorCommand
+from actuation_msgs.msg import MotorCommand, MotorEstimate
 from std_msgs.msg import Float64MultiArray, String, Int32
 from motor_interfaces.msg import MotorState
 
@@ -299,6 +300,7 @@ class MotorNode(Node):
         self.declare_parameter("position_kp", 20.0)  # Kp for MotorCommand position mode
         self.declare_parameter("position_kd", 1.0)  # Kd for MotorCommand position mode
         self.declare_parameter("velocity_kd", 1.0)  # Kd for MotorCommand velocity mode
+        self.declare_parameter("cmd_timeout", 0.5)  # seconds before stale command is cleared (0 = disabled)
 
         # Get parameters
         self.iface = self.get_parameter("can_interface").value
@@ -320,6 +322,7 @@ class MotorNode(Node):
         self.position_kp = float(self.get_parameter("position_kp").value)
         self.position_kd = float(self.get_parameter("position_kd").value)
         self.velocity_kd = float(self.get_parameter("velocity_kd").value)
+        self.cmd_timeout = float(self.get_parameter("cmd_timeout").value)
 
         # Log parameters for debugging
         self.get_logger().info(
@@ -349,9 +352,6 @@ class MotorNode(Node):
                 f"Failed to initialize CAN bus on interface '{self.iface}': {e}"
             )
             raise
-            self.bus.set_filters([{"can_id": self.arb, "can_mask": 0x7FF}])
-        except Exception:
-            pass  # Some interfaces don't support filtering
 
         # ---- ROS Publishers and Subscribers ----
         # Publishers
@@ -360,6 +360,9 @@ class MotorNode(Node):
         )
         self.pub_state = self.create_publisher(
             MotorState, f"/{self.joint_name}/motor_state", 10
+        )
+        self.pub_estimate = self.create_publisher(
+            MotorEstimate, f"/{self.joint_name}/estimate", 10
         )
 
         # Subscribers
@@ -383,6 +386,7 @@ class MotorNode(Node):
         self._neutral_hold = (
             False  # When True, sends zero commands regardless of cmd cache
         )
+        self._last_cmd_time = None  # Monotonic timestamp of last received command
 
         # Absolute position tracking (unwrapping)
         self._last_p = None  # Last raw position reading
@@ -421,6 +425,7 @@ class MotorNode(Node):
         with self._lock:
             self.cmd = list(map(float, msg.data))
             self._neutral_hold = False  # New command cancels any previous "clear" hold
+            self._last_cmd_time = time.monotonic()
 
         # Auto-start the motor on first command if not already started
         # if not self._started:
@@ -466,6 +471,7 @@ class MotorNode(Node):
         with self._lock:
             self.cmd = [p, v, kp, kd, t]
             self._neutral_hold = False  # New command cancels any previous "clear" hold
+            self._last_cmd_time = time.monotonic()
 
     def on_special(self, msg):
         """
@@ -513,6 +519,18 @@ class MotorNode(Node):
     # ---- Control Loop ----
     def _tick_control(self):
         """Periodic control loop that sends commands to the motor"""
+        if self.cmd_timeout > 0:
+            with self._lock:
+                if self._last_cmd_time is not None:
+                    elapsed = time.monotonic() - self._last_cmd_time
+                    if elapsed > self.cmd_timeout:
+                        self.cmd = [0.0, 0.0, 0.0, 0.0, 0.0]
+                        self._neutral_hold = True
+                        self._last_cmd_time = None
+                        self.get_logger().warn(
+                            f"No command for {elapsed:.2f}s on {self.joint_name}, clearing"
+                        )
+
         with self._lock:
             # If in neutral hold mode, send zeros; otherwise send cached command
             p, v, kp, kd, t = ([0.0] * 5) if self._neutral_hold else self.cmd
@@ -649,9 +667,16 @@ class MotorNode(Node):
             ms.abs_position = self._p_abs  # Absolute position in rad (unwrapped)
             ms.velocity = v  # Velocity in rad/s
             ms.torque = tau  #  Torque in Nms
-            ms.current = tau * TORQUE_CONSTANTS[self.motor_type]  # current in A
+            ms.current = tau * TORQUE_CONSTANTS.get(self.motor_type, 0.0)  # current in A
             ms.temperature = temp  # Temperature in °C
             self.pub_state.publish(ms)
+
+            # Publish MotorEstimate for leg kinematics (uses abs_position for unwrapped angle)
+            me = MotorEstimate()
+            me.pos_estimate = self._p_abs
+            me.vel_estimate = v
+            me.torq_estimate = tau
+            self.pub_estimate.publish(me)
 
     def destroy_node(self):
         """Clean up resources when the node is shutting down"""
