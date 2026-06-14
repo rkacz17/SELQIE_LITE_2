@@ -5,7 +5,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import JointState
-from actuation_msgs.msg import MotorEstimate
+from motor_interfaces.msg import MotorState
 
 def QOS_FAST() -> QoSProfile:
     """Get a QoSProfile with best-effort reliability and a depth of 10."""
@@ -20,11 +20,11 @@ class SELQIEJointPublisher(Node):
         
         # Subscriber to motor estimates
         self.NUM_MOTORS = 8
-        self._motor_estimates = [MotorEstimate() for _ in range(self.NUM_MOTORS)]
+        self._motor_estimates = [MotorState() for _ in range(self.NUM_MOTORS)]
         self._motor_estimate_subscribers = []
         for i in range(self.NUM_MOTORS):
             motor_estimate_callback = lambda msg, i=i: self._motor_estimates.__setitem__(i, msg)
-            self._motor_estimate_subscribers.append(self.create_subscription(MotorEstimate, f'motor{i}/estimate', motor_estimate_callback, QOS_FAST()))
+            self._motor_estimate_subscribers.append(self.create_subscription(MotorState, f'motor{i}/motor_state', motor_estimate_callback, QOS_FAST()))
             
         # Five bar linkage parameters
         self.LEG_LINK_1_LENGTH = 0.066
@@ -47,8 +47,8 @@ class SELQIEJointPublisher(Node):
         
         for i in range(0, self.NUM_MOTORS, 2):
             # Calculate the angles for the five bar linkage
-            thetaA = self._motor_estimates[i].pos_estimate
-            thetaB = self._motor_estimates[i+1].pos_estimate
+            thetaA = self._motor_estimates[i].position
+            thetaB = self._motor_estimates[i+1].position
             alpha = 0.5 * (math.pi - self.Y_AXIS_FLIP[i] * thetaA - self.Y_AXIS_FLIP[i+1] * thetaB)
             gamma = math.asin(self.LEG_LINK_1_LENGTH * math.sin(alpha) / self.LEG_LINK_2_LENGTH)
             beta = alpha + gamma
