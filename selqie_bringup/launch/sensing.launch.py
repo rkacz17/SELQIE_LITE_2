@@ -19,6 +19,7 @@ BATTERY_LAUNCH_FILE = os.path.join(
 def generate_launch_description():
     return LaunchDescription([
         SensingLaunch('bar100.launch.py'),
+        SensingLaunch('ws2812b.launch.py'),
         SensingLaunch('leak_sensor.launch.py'),
         SensingLaunch('reed_switch.launch.py'),
         IncludeLaunchDescription(

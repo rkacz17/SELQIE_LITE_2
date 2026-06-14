@@ -11,11 +11,10 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy
 from ament_index_python.packages import get_package_share_directory
 
-from std_msgs.msg import Empty, Float32
+from std_msgs.msg import Empty, Float32, String, UInt32MultiArray
 from geometry_msgs.msg import Twist, PoseStamped, PoseWithCovarianceStamped, Quaternion
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Image, Imu
-from std_msgs.msg import String
 from actuation_msgs.msg import MotorCommand
 from motor_interfaces.msg import MotorState
 from leg_control_msgs.msg import *
@@ -79,6 +78,7 @@ class SELQIE(Node):
         self.init_mapping()
         self.init_control()
         self.init_vision()
+        self.init_led()
         self.init_recording()
 
     def init_motors(self):
@@ -204,6 +204,10 @@ class SELQIE(Node):
         self._camera_right_image = Image()
         camera_right_callback = lambda msg: setattr(self, '_camera_right_image', msg)
         self._camera_right_sub = self.create_subscription(Image, 'stereo/right/image_raw', camera_right_callback, QOS_FAST())
+
+    def init_led(self):
+        """Initialize the WS2812B LED publisher."""
+        self._led_pub = self.create_publisher(UInt32MultiArray, 'led_colors', QOS_RELIABLE())
 
     def init_recording(self):
         self.ROSBAG_RECORD_TOPICS = ["motor0/motor_state", "motor1/motor_state", "motor2/motor_state", "motor3/motor_state", "motor4/motor_state", "motor5/motor_state", "motor6/motor_state", "motor7/motor_state",
@@ -519,7 +523,22 @@ class SELQIE(Node):
     def get_vision_camera_right(self) -> Image:
         """Get the latest image from the right camera."""
         return self._camera_right_image
-    
+
+    ###################
+    ### LED Functions ###
+    ###################
+
+    def set_led_color(self, r: int, g: int, b: int):
+        """Set the WS2812B LED color. r, g, b in range 0-255."""
+        packed = ((r & 0xFF) << 16) | ((g & 0xFF) << 8) | (b & 0xFF)
+        msg = UInt32MultiArray()
+        msg.data = [packed]
+        self._led_pub.publish(msg)
+
+    def set_led_off(self):
+        """Turn the WS2812B LED off."""
+        self.set_led_color(0, 0, 0)
+
     ################################
     ### Data Recording Functions ###
     ################################

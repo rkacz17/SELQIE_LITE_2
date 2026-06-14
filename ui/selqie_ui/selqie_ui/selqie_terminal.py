@@ -202,7 +202,26 @@ class SELQIETerminal(Cmd):
         except ValueError:
             print("Invalid brightness value")
             return
-        
+
+    def do_set_led_color(self, line : str):
+        """ Set the WS2812B LED color: set_led_color <r> <g> <b>  (0-255 each) """
+        args = line.split()
+        if len(args) != 3:
+            print("Usage: set_led_color <r> <g> <b>")
+            return
+        try:
+            r, g, b = int(args[0]), int(args[1]), int(args[2])
+            if not all(0 <= v <= 255 for v in (r, g, b)):
+                print("Values must be between 0 and 255")
+                return
+            self._selqie.set_led_color(r, g, b)
+        except ValueError:
+            print("Invalid color values")
+
+    def do_led_off(self, line : str):
+        """ Turn the WS2812B LED off """
+        self._selqie.set_led_off()
+
     def do_set_gait(self, line : str):
         """ Set the gait for the robot """
         args = line.split()
