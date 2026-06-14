@@ -41,9 +41,10 @@ class SELQIETerminal(Cmd):
             self._selqie.set_motor_clear_errors(i)
 
     def do_zero(self, line : str):
-        """ Zero the motors """
+        """ Set each Cubemars motor's current position to zero """
+        _ = line
         for i in range(self._selqie.NUM_MOTORS):
-            self._selqie.set_motor_position(i, 0.0)
+            self._selqie.set_motor_position_zero(i)
 
     def do_set_motor_position(self, line : str):
         """ Set the position of a motor """
