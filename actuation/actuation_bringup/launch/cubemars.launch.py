@@ -13,6 +13,7 @@ def launch_setup(context, *args, **kwargs):
     position_kp = LaunchConfiguration('position_kp').perform(context)
     position_kd = LaunchConfiguration('position_kd').perform(context)
     velocity_kd = LaunchConfiguration('velocity_kd').perform(context)
+    command_timeout = LaunchConfiguration('command_timeout').perform(context)
 
     joint_name = f'motor{motor_id}'
 
@@ -32,6 +33,7 @@ def launch_setup(context, *args, **kwargs):
                 'position_kp': float(position_kp),
                 'position_kd': float(position_kd),
                 'velocity_kd': float(velocity_kd),
+                'command_timeout': float(command_timeout),
             }],
         ),
     ]
@@ -68,6 +70,11 @@ def generate_launch_description():
             'velocity_kd',
             default_value='1.0',
             description='MIT Kd used for /motorN/command velocity control.',
+        ),
+        DeclareLaunchArgument(
+            'command_timeout',
+            default_value='1.0',
+            description='Seconds before stale velocity, torque, or MIT commands go neutral.',
         ),
         OpaqueFunction(function=launch_setup),
     ])
