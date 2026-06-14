@@ -14,6 +14,7 @@ def launch_setup(context, *args, **kwargs):
     position_kd = LaunchConfiguration('position_kd').perform(context)
     velocity_kd = LaunchConfiguration('velocity_kd').perform(context)
     cmd_timeout = LaunchConfiguration('cmd_timeout').perform(context)
+    reverse_polarity = LaunchConfiguration('reverse_polarity').perform(context)
 
     joint_name = f'motor{motor_id}'
 
@@ -34,6 +35,7 @@ def launch_setup(context, *args, **kwargs):
                 'position_kd': float(position_kd),
                 'velocity_kd': float(velocity_kd),
                 'cmd_timeout': float(cmd_timeout),
+                'reverse_polarity': reverse_polarity.lower() in ('true', '1', 'yes'),
             }],
         ),
     ]
@@ -75,6 +77,11 @@ def generate_launch_description():
             'cmd_timeout',
             default_value='0.5',
             description='Seconds without a command before motor is zeroed (0 = disabled).',
+        ),
+        DeclareLaunchArgument(
+            'reverse_polarity',
+            default_value='false',
+            description='Invert motor direction (true for inner shafts).',
         ),
         OpaqueFunction(function=launch_setup),
     ])
