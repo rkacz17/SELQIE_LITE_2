@@ -60,12 +60,12 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'position_kp',
-            default_value='3.0',
+            default_value='1.1',
             description='MIT Kp used for /motorN/command position control (AK40-10: T_MAX=5Nm, keep low).',
         ),
         DeclareLaunchArgument(
             'position_kd',
-            default_value='0.3',
+            default_value='0.12',
             description='MIT Kd used for /motorN/command position control.',
         ),
         DeclareLaunchArgument(
