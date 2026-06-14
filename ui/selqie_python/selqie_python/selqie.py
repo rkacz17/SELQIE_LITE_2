@@ -1,6 +1,8 @@
 import os
 import math
-from threading import Thread, Event
+import time
+from threading import Thread, Event, Lock
+from typing import Optional
 import subprocess
 from datetime import datetime
 
@@ -66,6 +68,7 @@ class SELQIE(Node):
     def __init__(self, name="selqie"):
         super().__init__(name)
         self._stop_event = Event()
+        self._battery_lock = Lock()
         
     def init(self):
         """Initialize all SELQIE components"""
@@ -156,26 +159,13 @@ class SELQIE(Node):
         )
         
     def snapshot_battery_voltage(self) -> tuple[Optional[float], Optional[float]]:
-        with self._lock:
+        with self._battery_lock:
             return self._battery_voltage, self._battery_voltage_stamp
         
     def _on_battery_voltage(self, msg: Float32) -> None:
-        with self._lock:
-            self._battery_voltage = msg.data
+        with self._battery_lock:
+            self._battery_voltage = float(msg.data)
             self._battery_voltage_stamp = time.time()
-            
-    def battery_voltage(self, line: str) -> None:
-        if line.strip():
-            print('Usage: battery')
-            return
-            
-        voltage, stamp = self._console.snapshot_battery_voltage()
-        if voltage is None or stamp is None:
-            print('No battery voltage messages received yet.')
-            return
-
-        age_s = time.time() - stamp
-        print(f'Battery voltage: {voltage:.2f} V (age {age_s:.1f}s)')
 
     def init_localization(self):
         """Initialize the localization publishers and subscribers."""
