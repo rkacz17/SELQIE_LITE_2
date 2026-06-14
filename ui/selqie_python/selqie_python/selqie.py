@@ -81,7 +81,6 @@ class SELQIE(Node):
     def init_motors(self):
         """Initialize the motor publishers and subscribers."""
         self.NUM_MOTORS = 8
-        self.DEFAULT_MOTOR_GAINS = [50.0, 0.05]
 
         self._motor_position_gains = [list(self.DEFAULT_MOTOR_GAINS) for _ in range(self.NUM_MOTORS)]
         self._motor_cmd_publishers = []
