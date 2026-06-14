@@ -10,7 +10,7 @@ def generate_launch_description():
             name='reed_switch_node',
             output='screen',
             parameters=[{
-                'gpio_pin': 16,      # BOARD pin 16 = SOC_GPIO08 on Orin AGX (no conflicts)
+                'gpio_pin': 38,      # BOARD pin 38
                 'frequency': 50.0,   # Hz
                 'active_high': True,
             }],
