@@ -6,14 +6,13 @@
 #include <eigen3/Eigen/Dense>
 
 // Headers for custom ROS messages
-#include <actuation_msgs/msg/motor_command.hpp>
-#include <actuation_msgs/msg/motor_estimate.hpp>
+#include <motor_interfaces/msg/motor_state.hpp>
+#include <std_msgs/msg/float64_multi_array.hpp>
 #include <leg_control_msgs/msg/leg_command.hpp>
 #include <leg_control_msgs/msg/leg_estimate.hpp>
 
 // Use namespaces to simplify code
 using namespace Eigen;
-using namespace actuation_msgs::msg;
 using namespace leg_control_msgs::msg;
 
 /*
@@ -98,12 +97,16 @@ private:
     rclcpp::Subscription<LegCommand>::SharedPtr _leg_command_sub; // Subscription for leg commands
     rclcpp::Publisher<LegEstimate>::SharedPtr _leg_estimate_pub;  // Publisher for leg estimates
 
-    std::vector<rclcpp::Subscription<MotorEstimate>::SharedPtr> _motor_estimate_subs; // Subscriptions for motor estimates
-    std::vector<rclcpp::Publisher<MotorCommand>::SharedPtr> _motor_command_pubs;      // Publishers for motor commands
+    std::vector<rclcpp::Subscription<motor_interfaces::msg::MotorState>::SharedPtr> _motor_state_subs; // Subscriptions for CubeMars motor states
+    std::vector<rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr> _motor_command_pubs;      // Publishers for CubeMars MIT commands
+
+    double _position_kp{20.0};
+    double _position_kd{1.0};
+    double _velocity_kd{1.0};
 
     rclcpp::TimerBase::SharedPtr _motor_estimate_timer; // Timer for periodic leg estimate updates
 
-    std::vector<MotorEstimate> _latest_motor_estimates; // Stores the latest motor estimates
+    std::vector<motor_interfaces::msg::MotorState> _latest_motor_states; // Stores the latest CubeMars motor states
 
     /*
      * Get the latest motor positions in vector form from the stored motor estimate messages
@@ -113,7 +116,7 @@ private:
         Vector3f positions;
         for (std::size_t i = 0; i < _model->get_num_motors(); i++)
         {
-            positions(i) = _latest_motor_estimates[i].pos_estimate;
+            positions(i) = _latest_motor_states[i].position;
         }
         return positions;
     }
@@ -126,7 +129,7 @@ private:
         Vector3f velocities;
         for (std::size_t i = 0; i < _model->get_num_motors(); i++)
         {
-            velocities(i) = _latest_motor_estimates[i].vel_estimate;
+            velocities(i) = _latest_motor_states[i].velocity;
         }
         return velocities;
     }
@@ -139,7 +142,7 @@ private:
         Vector3f torques;
         for (std::size_t i = 0; i < _model->get_num_motors(); i++)
         {
-            torques(i) = _latest_motor_estimates[i].torq_estimate;
+            torques(i) = _latest_motor_states[i].torque;
         }
         return torques;
     }
@@ -171,14 +174,29 @@ private:
 
         for (std::size_t i = 0; i < _model->get_num_motors(); i++)
         {
-            // Create new ROS messages for each motor command
-            MotorCommand motor_cmd;
-            motor_cmd.control_mode = msg.control_mode; // control mode matches the leg control mode
-            motor_cmd.pos_setpoint = motor_pos(i);
-            motor_cmd.vel_setpoint = motor_vels(i);
-            motor_cmd.torq_setpoint = motor_torqs(i);
+            // Publish CubeMars MIT command: [position, velocity, Kp, Kd, torque].
+            std_msgs::msg::Float64MultiArray motor_cmd;
+            motor_cmd.data.resize(5);
 
-            // Publish the motor command to the corresponding motor topic
+            if (msg.control_mode == LegCommand::CONTROL_MODE_POSITION)
+            {
+                motor_cmd.data = {motor_pos(i), motor_vels(i), _position_kp, _position_kd, motor_torqs(i)};
+            }
+            else if (msg.control_mode == LegCommand::CONTROL_MODE_VELOCITY)
+            {
+                motor_cmd.data = {0.0, motor_vels(i), 0.0, _velocity_kd, motor_torqs(i)};
+            }
+            else if (msg.control_mode == LegCommand::CONTROL_MODE_FORCE)
+            {
+                motor_cmd.data = {0.0, 0.0, 0.0, 0.0, motor_torqs(i)};
+            }
+            else
+            {
+                RCLCPP_WARN(_node->get_logger(), "Unsupported leg control_mode %u; motor command ignored", msg.control_mode);
+                continue;
+            }
+
+            // Publish the MIT command to the corresponding CubeMars motor topic.
             _motor_command_pubs[i]->publish(motor_cmd);
         }
     }
@@ -223,26 +241,33 @@ public:
         assert(num_motors > 0 && num_motors < 4); // Ensure the number of motors is valid (1 to 3)
 
         // Set the motor estimates vector size to the number of motors
-        _latest_motor_estimates.resize(num_motors);
+        _latest_motor_states.resize(num_motors);
 
         // Create publisher and subscriber for leg commands and estimates
         _leg_command_sub = node->create_subscription<LegCommand>(
             "leg/command", qos_reliable(), std::bind(&LegKinematicsNode::_leg_command_callback, this, std::placeholders::_1));
         _leg_estimate_pub = node->create_publisher<LegEstimate>("leg/estimate", qos_fast());
 
+        node->declare_parameter("position_kp", _position_kp);
+        node->declare_parameter("position_kd", _position_kd);
+        node->declare_parameter("velocity_kd", _velocity_kd);
+        _position_kp = node->get_parameter("position_kp").as_double();
+        _position_kd = node->get_parameter("position_kd").as_double();
+        _velocity_kd = node->get_parameter("velocity_kd").as_double();
+
         for (std::size_t m = 0; m < num_motors; m++)
         {
-            // Create a callback function for each motor estimate subscription
-            const auto estimate_callback = [this, m](const MotorEstimate::SharedPtr msg)
+            // Create a callback function for each CubeMars motor state subscription.
+            const auto state_callback = [this, m](const motor_interfaces::msg::MotorState::SharedPtr msg)
             {
-                _latest_motor_estimates[m] = *msg;
+                _latest_motor_states[m] = *msg;
             };
 
-            // Create the subscibers and publishers for each motor
-            _motor_estimate_subs.push_back(
-                node->create_subscription<MotorEstimate>("motor" + std::to_string(m) + "/estimate", qos_fast(), estimate_callback));
+            // Create the subscribers and publishers for each CubeMars motor.
+            _motor_state_subs.push_back(
+                node->create_subscription<motor_interfaces::msg::MotorState>("motor" + std::to_string(m) + "/motor_state", qos_fast(), state_callback));
             _motor_command_pubs.push_back(
-                node->create_publisher<MotorCommand>("motor" + std::to_string(m) + "/command", qos_reliable()));
+                node->create_publisher<std_msgs::msg::Float64MultiArray>("motor" + std::to_string(m) + "/mit_cmd", qos_reliable()));
         }
 
         // Create a timer for periodic leg estimates

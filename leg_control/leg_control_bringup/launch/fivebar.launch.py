@@ -32,10 +32,10 @@ def launch_setup(context, *args, **kwargs):
             remappings=[
                 ('leg/command', f'leg{leg_name}/command'),
                 ('leg/estimate', f'leg{leg_name}/estimate'),
-                ('motor0/command', f'motor{motor0}/command'),
-                ('motor0/estimate', f'motor{motor0}/estimate'),
-                ('motor1/command', f'motor{motor1}/command'),
-                ('motor1/estimate', f'motor{motor1}/estimate'),
+                ('motor0/mit_cmd', f'motor{motor0}/mit_cmd'),
+                ('motor0/motor_state', f'motor{motor0}/motor_state'),
+                ('motor1/mit_cmd', f'motor{motor1}/mit_cmd'),
+                ('motor1/motor_state', f'motor{motor1}/motor_state'),
             ],
         ),
     ]

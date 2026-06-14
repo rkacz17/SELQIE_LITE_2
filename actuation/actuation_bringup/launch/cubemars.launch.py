@@ -10,9 +10,6 @@ def launch_setup(context, *args, **kwargs):
     motor_type = LaunchConfiguration('motor_type').perform(context)
     control_hz = LaunchConfiguration('control_hz').perform(context)
     auto_start = LaunchConfiguration('auto_start').perform(context)
-    position_kp = LaunchConfiguration('position_kp').perform(context)
-    position_kd = LaunchConfiguration('position_kd').perform(context)
-    velocity_kd = LaunchConfiguration('velocity_kd').perform(context)
 
     joint_name = f'motor{motor_id}'
 
@@ -29,9 +26,6 @@ def launch_setup(context, *args, **kwargs):
                 'control_hz': float(control_hz),
                 'joint_name': joint_name,
                 'auto_start': auto_start.lower() in ('true', '1', 'yes'),
-                'position_kp': float(position_kp),
-                'position_kd': float(position_kd),
-                'velocity_kd': float(velocity_kd),
             }],
         ),
     ]
@@ -53,21 +47,6 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'auto_start', default_value='false', description='Start motor automatically.'
-        ),
-        DeclareLaunchArgument(
-            'position_kp',
-            default_value='20.0',
-            description='MIT Kp used for /motorN/command position control.',
-        ),
-        DeclareLaunchArgument(
-            'position_kd',
-            default_value='1.0',
-            description='MIT Kd used for /motorN/command position control.',
-        ),
-        DeclareLaunchArgument(
-            'velocity_kd',
-            default_value='1.0',
-            description='MIT Kd used for /motorN/command velocity control.',
         ),
         OpaqueFunction(function=launch_setup),
     ])

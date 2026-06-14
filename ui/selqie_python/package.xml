@@ -13,7 +13,6 @@
   <depend>nav_msgs</depend>
   <depend>sensor_msgs</depend>
   <depend>motor_interfaces</depend>
-  <depend>actuation_msgs</depend>
   <depend>leg_control_msgs</depend>
   <depend>robot_localization</depend>
 
