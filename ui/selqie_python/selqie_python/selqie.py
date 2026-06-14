@@ -244,6 +244,10 @@ class SELQIE(Node):
         """Clear motor faults and hold neutral command."""
         self.send_motor_special_command(motor_idx, 'clear')
 
+    def set_motor_position_zero(self, motor_idx : int):
+        """Set the motor's current Cubemars encoder position to zero."""
+        self.send_motor_special_command(motor_idx, 'zero')
+
     def send_motor_command(self, motor_idx : int, position : float, velocity : float, kp : float, kd : float, torque : float):
         """Send a Cubemars MotorCommand; gains are owned by the motor launch file."""
         if motor_idx < 0 or motor_idx >= self.NUM_MOTORS:
