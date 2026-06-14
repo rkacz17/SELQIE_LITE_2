@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:stereolabs.com)",
+      "WebFetch(domain:ros.org)",
+      "WebFetch(domain:enepaq.com)"
+    ]
+  }
+}
