@@ -12,7 +12,7 @@
   <depend>geometry_msgs</depend>
   <depend>nav_msgs</depend>
   <depend>sensor_msgs</depend>
-  <depend>actuation_msgs</depend>
+  <depend>motor_interfaces</depend>
   <depend>selqie_python</depend>
 
   <test_depend>ament_copyright</test_depend>

@@ -14,7 +14,7 @@ from geometry_msgs.msg import Twist, PoseStamped, PoseWithCovarianceStamped, Qua
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Image, Imu
 from std_msgs.msg import String
-from std_msgs.msg import Float64MultiArray
+from actuation_msgs.msg import MotorCommand
 from motor_interfaces.msg import MotorState
 from leg_control_msgs.msg import *
 from robot_localization.srv import SetPose
@@ -81,7 +81,10 @@ class SELQIE(Node):
     def init_motors(self):
         """Initialize the motor publishers and subscribers."""
         self.NUM_MOTORS = 8
-        self.DEFAULT_MOTOR_GAINS = [50.0, 0.05]
+        # Compatibility marker for older callers that inspect this attribute.
+        # Motor gains are not read from this value; cubemars_v2_ros.motor_node
+        # applies the position/velocity gains configured in the launch file.
+        self.DEFAULT_MOTOR_GAINS = (0.0, 0.0)
 
         self._motor_cmd_publishers = []
         self._motor_special_publishers = []
@@ -90,7 +93,7 @@ class SELQIE(Node):
 
         for i in range(self.NUM_MOTORS):
             self._motor_cmd_publishers.append(
-                self.create_publisher(Float64MultiArray, f'/motor{i}/mit_cmd', QOS_RELIABLE())
+                self.create_publisher(MotorCommand, f'/motor{i}/command', QOS_RELIABLE())
             )
             self._motor_special_publishers.append(
                 self.create_publisher(String, f'/motor{i}/special_cmd', QOS_RELIABLE())
@@ -180,8 +183,8 @@ class SELQIE(Node):
         self._camera_right_sub = self.create_subscription(Image, 'stereo/right/image_raw', camera_right_callback, QOS_FAST())
 
     def init_recording(self):
-        self.ROSBAG_RECORD_TOPICS = ["motor0/estimate","motor1/estimate","motor2/estimate","motor3/estimate","motor4/estimate", "motor5/estimate", "motor6/estimate", "motor7/estimate",
-                                     "motor0/info", "motor1/info", "motor2/info", "motor3/info", "motor4/info", "motor5/info", "motor6/info", "motor7/info",
+        self.ROSBAG_RECORD_TOPICS = ["motor0/motor_state", "motor1/motor_state", "motor2/motor_state", "motor3/motor_state", "motor4/motor_state", "motor5/motor_state", "motor6/motor_state", "motor7/motor_state",
+                                     "motor0/error_code", "motor1/error_code", "motor2/error_code", "motor3/error_code", "motor4/error_code", "motor5/error_code", "motor6/error_code", "motor7/error_code",
                                      "legFL/command", "legRL/command", "legRR/command", "legFR/command",
                                      "stereo/left/image_raw", "stereo/right/image_raw", "lights/pwm",
                                      "imu/data", "bar100/depth", "bar100/temperature",
@@ -241,24 +244,35 @@ class SELQIE(Node):
         self.send_motor_special_command(motor_idx, 'clear')
 
     def send_motor_command(self, motor_idx : int, position : float, velocity : float, kp : float, kd : float, torque : float):
-        """Send MIT command [position, velocity, kp, kd, torque]."""
+        """Send a Cubemars MotorCommand; gains are owned by the motor launch file."""
         if motor_idx < 0 or motor_idx >= self.NUM_MOTORS:
             raise ValueError(f"Motor index {motor_idx} out of range")
-        cmd = Float64MultiArray()
-        cmd.data = [float(position), float(velocity), float(kp), float(kd), float(torque)]
+        _ = (kp, kd)  # Kept for API compatibility; motor_node uses launch-file gain parameters.
+        cmd = MotorCommand()
+        cmd.control_mode = MotorCommand.CONTROL_MODE_POSITION
+        cmd.input_mode = MotorCommand.INPUT_MODE_PASSTHROUGH
+        cmd.pos_setpoint = float(position)
+        cmd.vel_setpoint = float(velocity)
+        cmd.torq_setpoint = float(torque)
         self._motor_cmd_publishers[motor_idx].publish(cmd)
 
     def set_motor_position(self, motor_idx : int, pos : float):
-        """Set motor position with default gains and zero velocity/torque feedforward."""
-        self.send_motor_command(motor_idx, pos, 0.0, self.DEFAULT_MOTOR_GAINS[0], self.DEFAULT_MOTOR_GAINS[1], 0.0)
+        """Set motor position using the gains configured on the Cubemars launch file."""
+        self.send_motor_command(motor_idx, pos, 0.0, 0.0, 0.0, 0.0)
 
     def set_motor_gains(self, motor_idx : int, p_gain : float, v_gain : float, v_int_gain : float | None = None):
-        """Update default MIT gains used by helper position commands."""
-        self.DEFAULT_MOTOR_GAINS = [p_gain, v_gain]
+        """Leave motor gains unchanged; Cubemars gains are launch-file parameters."""
+        if motor_idx < 0 or motor_idx >= self.NUM_MOTORS:
+            raise ValueError(f"Motor index {motor_idx} out of range")
+        _ = (p_gain, v_gain, v_int_gain)
+        self.get_logger().warn(
+            "Ignoring set_motor_gains(); Cubemars position/velocity gains are configured in actuation_bringup/launch/cubemars.launch.py"
+        )
 
     def set_motor_gains_default(self, motor_idx : int):
-        """Compatibility shim; no per-motor persistent gain command in Cubemars node."""
-        _ = motor_idx
+        """Leave motor gains unchanged; launch-file gains remain in effect."""
+        if motor_idx < 0 or motor_idx >= self.NUM_MOTORS:
+            raise ValueError(f"Motor index {motor_idx} out of range")
 
     def get_motor_info(self, motor_idx : int) -> String:
         """Get the latest motor error/status string message."""

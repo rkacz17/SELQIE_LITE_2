@@ -57,21 +57,12 @@ class SELQIETerminal(Cmd):
             print("Invalid motor or position values")
 
     def do_set_gains(self, line : str):
-        """ Set the gains for the motors """
-        args = line.split()
-        if len(args) != 3:
-            print("Usage: set_gains <p_gain> <v_gain> <vi_gain>")
-            return
-        try:
-            for i in range(self._selqie.NUM_MOTORS):
-                self._selqie.set_motor_gains(i, float(args[0]), float(args[1]), float(args[2]))
-        except ValueError:
-            print("Invalid gain values")
+        """ Gains are configured by the Cubemars launch file; this command does not change them. """
+        _ = line
+        print("Motor gains are controlled by actuation_bringup/launch/cubemars.launch.py and were not changed.")
 
     def do_default(self, line : str):
-        """ Set default motor gains and leg positions """
-        for i in range(self._selqie.NUM_MOTORS):
-            self._selqie.set_motor_gains_default(i)
+        """ Keep launch-file motor gains and set default leg positions """
         for i in range(self._selqie.NUM_LEGS):
             self._selqie.set_leg_position_default(i)
 
