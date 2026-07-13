@@ -1,0 +1,36 @@
+/**:
+  ros__parameters:
+    general:
+      camera_model: 'zedm'      # ZED Mini
+      camera_name: 'stereo'     # Sets topic prefix to stereo/…
+      grab_frame_rate: 30
+      gpu_id: -1                # Auto-select GPU
+      verbose: false
+
+    video:
+      img_downsample_factor: 1.0
+
+    depth:
+      depth_mode: 'ULTRA'       # PERFORMANCE | QUALITY | ULTRA | NEURAL
+      depth_stabilization: 1
+      min_depth: 0.2            # metres
+      max_depth: 10.0           # metres
+
+    point_cloud:
+      point_cloud_freq: 15.0    # Hz; keep below grab_frame_rate
+
+    pos_tracking:
+      pos_tracking_enabled: false
+
+    sensors:
+      sensors_image_sync: false
+      publish_imu_tf: false     # Set true if ZED Mini IMU should drive TF
+
+    # ZED SDK object detection (requires CUDA + compatible ZED SDK edition).
+    # When enabled, objects are published on stereo/obj_det/objects
+    # (zed_msgs/ObjectsStamped). Disable if not needed to save GPU resources.
+    object_detection:
+      od_enabled: false
+      model: 'MULTI_CLASS_BOX_FAST'
+      confidence_threshold: 50
+      max_range: 10.0
