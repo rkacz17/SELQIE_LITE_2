@@ -12,13 +12,13 @@ CUBEMARS_LAUNCH_FILE = os.path.join(
 
 # ── Per-group gain tuning ──────────────────────────────────────────────────────
 # Inner shafts (motors 0, 2, 4, 6) — reversed polarity
-INNER_KP         = '3.0'
-INNER_KD         = '0.3'
+INNER_KP         = '6.0'
+INNER_KD         = '0.35'
 INNER_VEL_KD     = '0.5'
 
 # Outer shafts (motors 1, 3, 5, 7)
-OUTER_KP         = '3.0'
-OUTER_KD         = '0.3'
+OUTER_KP         = '6.0'
+OUTER_KD         = '0.35'
 OUTER_VEL_KD     = '0.5'
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -45,8 +45,7 @@ def CubemarsLaunch(motor_id: str, interface: str,
 
 def InnerShaft(motor_id: str, interface: str):
     return CubemarsLaunch(motor_id, interface,
-                          INNER_KP, INNER_KD, INNER_VEL_KD,
-                          reverse_polarity='true')
+                          INNER_KP, INNER_KD, INNER_VEL_KD)
 
 def OuterShaft(motor_id: str, interface: str):
     return CubemarsLaunch(motor_id, interface,

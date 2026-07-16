@@ -10,7 +10,7 @@ def generate_launch_description():
             name='servo_node',
             output='screen',
             parameters=[{
-                'gpio_pin': 32,           # BOARD pin 32 = PWM0 on Orin AGX
+                'gpio_pin': 13,           # BOARD pin 32 = PWM0 on Orin AGX
                 'frequency': 50.0,        # Hz — standard RC servo
                 'open_duty_cycle': 5.0,   # 1.0 ms pulse → latch open
                 'close_duty_cycle': 10.0, # 2.0 ms pulse → latch closed
