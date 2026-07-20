@@ -246,8 +246,9 @@ def parse_reply(b, R):
     drv = b[0]  # Driver ID (motor controller ID)
     p_int = (b[1] << 8) | b[2]  # Position (16 bits)
     v_int = (b[3] << 4) | (b[4] >> 4)  # Velocity (12 bits)
-    i_int = ((b[4] & 0x0F) << 8) | b[5]  # Current/Torque (12 bits)
-    temp = b[6]  # Temperature (8 bits)
+    i_int = ((b[4] & 0x0F) << 8) | b[5]  # Torque (12 bits)
+    # Per CubeMars AK series MIT protocol, raw byte maps to -40~215 degC (Temperature = raw - 40)
+    temp = b[6] - 40  # Temperature (degC)
     err = b[7]  # Error code (8 bits)
 
     # Convert integer values back to physical units
@@ -667,7 +668,8 @@ class MotorNode(Node):
             ms.abs_position = self._p_abs  # Absolute position in rad (unwrapped)
             ms.velocity = v  # Velocity in rad/s
             ms.torque = tau  #  Torque in Nms
-            ms.current = tau * TORQUE_CONSTANTS.get(self.motor_type, 0.0)  # current in A
+            kt = TORQUE_CONSTANTS.get(self.motor_type)  # Nm/A
+            ms.current = (tau / kt) if kt else 0.0  # current in A (Torque = Kt * Current)
             ms.temperature = temp  # Temperature in °C
             self.pub_state.publish(ms)
 
