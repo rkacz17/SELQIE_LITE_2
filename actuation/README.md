@@ -129,16 +129,18 @@ float32 torq_estimate  # Nm
 Gains are set per shaft group in `selqie_bringup/launch/actuation.launch.py`:
 
 ```python
-INNER_KP     = '3.0'   # motors 0, 2, 4, 6 (reversed polarity)
-INNER_KD     = '0.3'
+INNER_KP     = '6.0'   # motors 0, 2, 4, 6 — inner shafts
+INNER_KD     = '0.35'
 INNER_VEL_KD = '0.5'
 
-OUTER_KP     = '3.0'   # motors 1, 3, 5, 7
-OUTER_KD     = '0.3'
+OUTER_KP     = '6.0'   # motors 1, 3, 5, 7 — outer shafts
+OUTER_KD     = '0.35'
 OUTER_VEL_KD = '0.5'
 ```
 
-Edit those constants to retune both groups without touching individual motor launch arguments.
+Edit those constants to retune both groups without touching individual motor launch arguments. These are tuning constants a maintainer edits directly in the launch file, so treat the values above as a snapshot, not a guarantee — check the file itself if precision matters.
+
+> **Note:** despite `cubemars.launch.py`'s `reverse_polarity` argument being documented as "true for inner shafts," the `InnerShaft()` helper in `selqie_bringup/launch/actuation.launch.py` does not currently pass `reverse_polarity='true'` — it falls through to the default `'false'`, same as `OuterShaft()`. As written, no motor currently launches with reversed polarity. Confirm this is intentional (e.g. that polarity is instead handled inside the five-bar kinematics) before relying on the "reversed polarity" language elsewhere in this file or in the root README.
 
 ### Why the gains are low
 
@@ -146,7 +148,7 @@ The AK40-10 in MIT mode applies `Kp` directly — there is no position filter or
 
 | Gain | Starting point |
 |------|---------------|
-| Kp (position) | 1.0 – 3.0 |
+| Kp (position) | 1.0 – 6.0 |
 | Kd (position) | 0.1 – 0.5 |
 | Kd (velocity) | 0.3 – 0.8 |
 
