@@ -44,7 +44,7 @@ LIMITS = {
     "AK80-9": dict(V_MIN=-50.0, V_MAX=50.0, T_MIN=-18.0, T_MAX=18.0),
     "AK80-64": dict(V_MIN=-8.0, V_MAX=8.0, T_MIN=-144.0, T_MAX=144.0),
     "AK80-8": dict(V_MIN=-37.5, V_MAX=37.5, T_MIN=-32.0, T_MAX=32.0),
-    "AK40-10": dict(V_MIN=-45.5, V_MAX=45.5, T_MIN=-5.0, T_MAX=5.0),
+    "AK40-10": dict(V_MIN=-45.5, V_MAX=45.5, T_MIN=-4.1, T_MAX=4.1),
 }
 
 # Motor-side (pre-gearbox) torque constants (Nm/A), as published in each
@@ -76,9 +76,11 @@ GEAR_RATIOS = {
 # ERPM (electrical RPM = mechanical_rotor_RPM * pole_pairs), so converting
 # output-shaft rad/s <-> ERPM needs both the gear ratio and the pole pairs:
 #   ERPM = rad_s * (60 / 2pi) * gear_ratio * pole_pairs
-# The AK series uses a 21-pole-pair (42-pole) outrunner.  These values only
-# affect VELOCITY-mode scaling (position and torque modes are unaffected);
-# verify per motor and override with the ``pole_pairs`` parameter if needed.
+# These values only affect VELOCITY-mode scaling (position and torque modes are
+# unaffected).  AK40-10 = 14 pole pairs (24 slots), confirmed from its
+# datasheet.  The other models are best-guess (21 is common for the AK series)
+# and are NOT datasheet-verified -- confirm and override with the ``pole_pairs``
+# parameter before relying on VELOCITY-mode gaits with those motors.
 POLE_PAIRS = {
     "AK10-9": 21,
     "AK60-6": 14,
@@ -87,7 +89,7 @@ POLE_PAIRS = {
     "AK80-9": 21,
     "AK80-64": 21,
     "AK80-8": 21,
-    "AK40-10": 21,
+    "AK40-10": 14,  # datasheet-verified (24 slots / 14 pole pairs)
 }
 
 DEFAULT_POLE_PAIRS = 21

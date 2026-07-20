@@ -70,7 +70,7 @@ additionally need the gear ratio, pole pairs, and torque constant listed below.
 | Model | V_MAX (rad/s) | T_MAX (Nm) | Gear | Pole pairs | Kt (Nm/A) |
 |-------|--------------|------------|------|-----------|-----------|
 | AK10-9 | ±50 | ±65 | 9 | 21 | 0.198 |
-| AK40-10 | ±45.5 | ±5 | 10 | 21 | 0.056 |
+| AK40-10 | ±45.5 | ±4.1 | 10 | 14 † | 0.056 |
 | AK60-6 | ±45 | ±15 | 6 | 14 | — |
 | AK70-10 | ±50 | ±25 | 10 | 21 | 0.123 |
 | AK80-6 | ±76 | ±12 | 6 | 21 | — |
@@ -78,10 +78,12 @@ additionally need the gear ratio, pole pairs, and torque constant listed below.
 | AK80-9 | ±50 | ±18 | 9 | 21 | — |
 | AK80-64 | ±9.2 | ±144 | 64 | 21 | 0.136 |
 
-SELQIE Lite 2 uses **AK40-10** motors exclusively. Pole-pair values only affect VELOCITY-mode
-scaling; verify them against your motors and override with the `pole_pairs` parameter if a torque
-constant or gear ratio for a given model is missing above, torque/velocity conversion falls back to
-a safe default (current 0 / gear 1).
+SELQIE Lite 2 uses **AK40-10** motors exclusively. † The AK40-10 row is datasheet-verified
+(24 slots / 14 pole pairs, KT 0.056 Nm/A, 10:1, 4.1 Nm peak torque = 7.3 A peak current). Pole-pair
+values for the other models are best-guess (21 is common for the AK series) and only affect
+VELOCITY-mode scaling — verify them against your motors and override with the `pole_pairs` parameter.
+If a torque constant or gear ratio for a given model is missing above, torque/velocity conversion
+falls back to a safe default (current 0 / gear 1).
 
 ---
 

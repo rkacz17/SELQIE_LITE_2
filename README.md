@@ -99,7 +99,7 @@ The IMU is mounted at the center of mass, which is the geometric center of the b
 
 \* This is the documented intent (`reverse_polarity` is described as "true for inner shafts" in `actuation_bringup/launch/cubemars.launch.py`), but `selqie_bringup/launch/actuation.launch.py`'s `InnerShaft()` helper does not currently pass `reverse_polarity='true'`, so all motors launch with `reverse_polarity=false` in practice. Verify before relying on this column.
 
-Motor type: **CubeMars AK40-10** — CubeMars Servo Mode protocol, T_MAX = 5 Nm
+Motor type: **CubeMars AK40-10** — CubeMars Servo Mode protocol, peak torque = 4.1 Nm
 
 ### Jetson AGX Orin 40-Pin Header
 

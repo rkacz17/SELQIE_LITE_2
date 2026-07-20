@@ -211,7 +211,7 @@ def test_position_command_emits_degrees(make_node):
 
 
 def test_velocity_command_emits_erpm(make_node):
-    node, mn = make_node(motor_type="AK40-10")  # gear=10, pole_pairs=21
+    node, mn = make_node(motor_type="AK40-10")  # gear=10, pole_pairs=14
     cmd = mn.MotorCommand()
     cmd.control_mode = mn.MotorCommand.CONTROL_MODE_VELOCITY
     cmd.vel_setpoint = 6.283185307179586  # 1 rev/s of output shaft = 2pi rad/s
@@ -222,8 +222,8 @@ def test_velocity_command_emits_erpm(make_node):
     pid, _ = sp.parse_status_id(frame.arbitration_id)
     assert pid == sp.CAN_PACKET_SET_RPM
     erpm = struct.unpack(">i", frame.data)[0]
-    # 60 output RPM * gear(10) * pole_pairs(21) = 12600 ERPM
-    assert erpm == pytest.approx(12600, abs=1)
+    # 60 output RPM * gear(10) * pole_pairs(14) = 8400 ERPM
+    assert erpm == pytest.approx(8400, abs=1)
 
 
 def test_torque_command_emits_current(make_node):
@@ -243,17 +243,17 @@ def test_torque_command_emits_current(make_node):
 
 
 def test_torque_command_clamped_to_motor_limit(make_node):
-    node, mn = make_node(motor_type="AK40-10")  # T_MAX = 5 Nm
+    node, mn = make_node(motor_type="AK40-10")  # T_MAX = 4.1 Nm (peak torque)
     cmd = mn.MotorCommand()
     cmd.control_mode = mn.MotorCommand.CONTROL_MODE_TORQUE
-    cmd.torq_setpoint = 100.0  # way over the 5 Nm limit
+    cmd.torq_setpoint = 100.0  # way over the 4.1 Nm limit
     node.on_motor_command(cmd)
     node._tick_control()
 
     frame = _last_frame(node)
     milli_amps = struct.unpack(">i", frame.data)[0]
-    # 5 Nm / (0.056*10) = 8.9286 A -> 8928 mA
-    assert milli_amps == pytest.approx(int(5.0 / (0.056 * 10) * 1000), abs=2)
+    # 4.1 Nm / (0.056*10) = 7.321 A -> ~7321 mA (matches datasheet 7.3 A peak)
+    assert milli_amps == pytest.approx(int(4.1 / (0.056 * 10) * 1000), abs=2)
 
 
 def test_reverse_polarity_negates_position(make_node):
