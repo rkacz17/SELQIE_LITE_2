@@ -110,7 +110,11 @@ private:
      */
     Vector3f _get_latest_motor_positions() const
     {
-        Vector3f positions;
+        // Zero-initialized: for models with fewer than 3 motors (e.g. the 2-motor
+        // FiveBar2DModel used by all 4 legs), Eigen leaves unset entries uninitialized
+        // otherwise, and the Jacobian's unused row/column maps that garbage straight
+        // into the published foot estimate (e.g. vel_estimate.y / force_estimate.y).
+        Vector3f positions = Vector3f::Zero();
         for (std::size_t i = 0; i < _model->get_num_motors(); i++)
         {
             positions(i) = _latest_motor_estimates[i].pos_estimate;
@@ -123,7 +127,7 @@ private:
      */
     Vector3f _get_latest_motor_velocities() const
     {
-        Vector3f velocities;
+        Vector3f velocities = Vector3f::Zero();
         for (std::size_t i = 0; i < _model->get_num_motors(); i++)
         {
             velocities(i) = _latest_motor_estimates[i].vel_estimate;
@@ -136,7 +140,7 @@ private:
      */
     Vector3f _get_latest_motor_torques() const
     {
-        Vector3f torques;
+        Vector3f torques = Vector3f::Zero();
         for (std::size_t i = 0; i < _model->get_num_motors(); i++)
         {
             torques(i) = _latest_motor_estimates[i].torq_estimate;

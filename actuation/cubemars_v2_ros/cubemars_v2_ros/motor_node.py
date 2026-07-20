@@ -127,12 +127,24 @@ LIMITS = {
     ),
 }
 
-# Torque constants (Nm/A) for converting between current and torque
+# Motor-side (pre-gearbox) torque constants (Nm/A), as published in each
+# motor's datasheet (e.g. AK40-10 KT = 0.056 Nm/A).
 TORQUE_CONSTANTS = {
     "AK10-9": 0.198,  # Nm/A
     "AK70-10": 0.123,  # Nm/A
     "AK80-64": 0.136,  # Nm/A
-    "AK40-10": 0.056,
+    "AK40-10": 0.056,  # Nm/A
+}
+
+# Gearbox reduction ratio (output:motor), i.e. the number after the dash in
+# the model name. The CAN protocol's torque field is measured at the output
+# shaft (post-gearbox), so recovering phase current needs both the motor-side
+# Kt above and this ratio: current = output_torque / (Kt * gear_ratio).
+GEAR_RATIOS = {
+    "AK10-9": 9,
+    "AK70-10": 10,
+    "AK80-64": 64,
+    "AK40-10": 10,
 }
 
 # Motor error code mapping for human-readable messages
@@ -246,8 +258,9 @@ def parse_reply(b, R):
     drv = b[0]  # Driver ID (motor controller ID)
     p_int = (b[1] << 8) | b[2]  # Position (16 bits)
     v_int = (b[3] << 4) | (b[4] >> 4)  # Velocity (12 bits)
-    i_int = ((b[4] & 0x0F) << 8) | b[5]  # Current/Torque (12 bits)
-    temp = b[6]  # Temperature (8 bits)
+    i_int = ((b[4] & 0x0F) << 8) | b[5]  # Torque (12 bits)
+    # Per CubeMars AK series MIT protocol, raw byte maps to -40~215 degC (Temperature = raw - 40)
+    temp = b[6] - 40  # Temperature (degC)
     err = b[7]  # Error code (8 bits)
 
     # Convert integer values back to physical units
@@ -666,8 +679,11 @@ class MotorNode(Node):
             ms.position = p  # Position in rad (raw)
             ms.abs_position = self._p_abs  # Absolute position in rad (unwrapped)
             ms.velocity = v  # Velocity in rad/s
-            ms.torque = tau  #  Torque in Nms
-            ms.current = tau * TORQUE_CONSTANTS.get(self.motor_type, 0.0)  # current in A
+            ms.torque = tau  #  Torque in Nms (output shaft, i.e. post-gearbox)
+            kt = TORQUE_CONSTANTS.get(self.motor_type)  # Nm/A, motor-side (pre-gearbox)
+            gear_ratio = GEAR_RATIOS.get(self.motor_type)
+            # output_torque = Kt * current * gear_ratio  =>  current = output_torque / (Kt * gear_ratio)
+            ms.current = (tau / (kt * gear_ratio)) if kt and gear_ratio else 0.0  # current in A
             ms.temperature = temp  # Temperature in °C
             self.pub_state.publish(ms)
 
