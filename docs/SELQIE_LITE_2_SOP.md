@@ -161,6 +161,7 @@ Keep this picture in mind; the rest of the document walks through each block. Th
 **Verified from code:** SELQIE Lite 2 is powered from a single battery pack monitored by a **TinyBMS** unit over UART (`battery/battery/tinybms_voltage_uart.py`, topic `/tinybms/pack_voltage`, readable from the terminal's `battery` command). This is a different arrangement from the predecessor's two hand-labelled packs (#2/#3) wired in parallel.
 
 **Not verified from code — confirm with a lab lead:**
+
 - Whether there is more than one physical pack behind the TinyBMS.
 - The exact connector/harness sequence for connecting and disconnecting the pack.
 - Storage requirements (the predecessor required packs to be unplugged from their parallel harness in storage — check whether an equivalent applies here).
@@ -177,6 +178,7 @@ Keep this picture in mind; the rest of the document walks through each block. Th
 - any person or object inside the legs' range of motion.
 
 If there is **no** hardware E-Stop, the fastest software-level equivalents are, in order of speed:
+
 1. `idle` in the SELQIE terminal (sends `"exit"` to all 8 motors — de-energizes them; see [Section 9](#9-selqie-terminal-command-reference)).
 2. `Ctrl+C` / closing the terminal pane, which stops publishing new commands (motors will hold their last state until `cmd_timeout` elapses — 0.5 s by default — then hold passively).
 3. Disconnecting motor power at the source, if you know where that is.
@@ -435,6 +437,7 @@ or use the shortcuts, which set the gait and send velocity in one call:
 *Print this.*
 
 **Power ON**
+
 - [ ] 2 trained people present
 - [ ] Physical E-Stop location confirmed with a lab lead (or confirmed there isn't one, and you know `idle` is your fallback)
 - [ ] Wiring inspected (no loose/bare/dismounted connections)
@@ -444,6 +447,7 @@ or use the shortcuts, which set the gait and send velocity in one call:
 - [ ] CAN interfaces up: `ip link show can0` / `can1` → `UP`
 
 **Connect & Launch**
+
 - [ ] Ethernet tether connected, strain-relieved
 - [ ] `ssh selqie@<ip>` → lab password
 - [ ] `bash ~/selqie_ws/src/SELQIE_LITE_2/tmux/selqie.sh`
@@ -451,6 +455,7 @@ or use the shortcuts, which set the gait and send velocity in one call:
 - [ ] **If you need leak protection, battery voltage, depth, camera, or LED:** `ros2 launch selqie_bringup sensing.launch.py` (and `vision.launch.py` for camera/lights) in another pane
 
 **Run a Test** (SELQIE terminal, top-right)
+
 - [ ] `zero` (legs supported/braced)
 - [ ] Confirm legs clear of everything
 - [ ] `ready` (hands clear — legs are live)
@@ -461,6 +466,7 @@ or use the shortcuts, which set the gait and send velocity in one call:
 - [ ] `idle`, then `exit`
 
 **Power OFF**
+
 - [ ] `sudo shutdown -h now` → wait for the Orin to power down
 - [ ] Physical power-off, reverse of power-on order, per your lab's current procedure
 
