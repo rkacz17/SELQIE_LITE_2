@@ -77,7 +77,7 @@ class JetsonGPIONode(Node):
         # Read GPIO input and publish the value
         val = GPIO.input(self.gpio_pin)
         msg = Float32()
-        msg.data = val
+        msg.data = float(val)
         self.publisher.publish(msg)
 
     def subscriber_callback(self, msg : Float32):
