@@ -1,13 +1,22 @@
 #!/usr/bin/env python3
 """
-ROS2 Node for Cubemars Actuator Control
+ROS2 Node for Cubemars Actuator Control (Servo Mode).
 
 This module provides a ROS2 interface for controlling Cubemars (AK series)
-motor actuators via CAN bus. It supports multiple motor types and implements
-the MIT control protocol for commanding position, velocity, and torque.
+motor actuators via CAN bus using the CubeMars **Servo Mode** protocol
+(AK Series Module Driver Manual V1.0.18, section 5).
+
+Unlike the MIT protocol, servo mode has **no Kp / Kd gains** -- the position
+and velocity loops run inside the driver.  Each CAN frame commands exactly one
+quantity (duty / current / speed / position).  Servo mode also uses different
+units from MIT mode; the conversions (radians<->degrees, rad/s<->ERPM,
+N.m<->amperes) are implemented in :mod:`cubemars_v2_ros.servo_protocol` so that
+the ROS interface below stays in the SI units the rest of the SELQIE stack
+expects (rad, rad/s, N.m at the output shaft).
 
 The node publishes motor state data including position, velocity, torque,
-temperature, and error codes, and subscribes to command topics for motor control.
+current, temperature, and error codes, and subscribes to command topics for
+motor control.
 """
 
 import threading
@@ -17,118 +26,30 @@ import can
 import rclpy
 from rclpy.node import Node
 from actuation_msgs.msg import MotorCommand, MotorEstimate
-from std_msgs.msg import Float64MultiArray, String, Int32
+from std_msgs.msg import Float64MultiArray, String
 from motor_interfaces.msg import MotorState
 
-# TODO: Add additional motors and their specifications
+from cubemars_v2_ros import servo_protocol as sp
 
 # ===================== MOTOR SPECIFICATIONS AND CONSTANTS =====================
 
-# Motor limits for different actuator models (from CubeMars documentation)
-# P: position limits (rad), V: velocity limits (rad/s), T: torque limits (Nm)
-# KP: position gain limits, KD: velocity gain limits
+# Physical limits used to clamp setpoints *before* converting to servo units.
+# V: velocity limits (rad/s), T: torque limits (Nm) at the output shaft.
+# (Servo mode has no position gain limits -- Kp/Kd are not transmitted.)
 LIMITS = {
-    # Position is ±12.5 rad for all models; Kp=[0,500], Kd=[0,5]
-    "AK10-9": dict(
-        P_MIN=-12.5,
-        P_MAX=12.5,
-        V_MIN=-50.0,
-        V_MAX=50.0,
-        T_MIN=-65.0,
-        T_MAX=65.0,
-        KP_MIN=0.0,
-        KP_MAX=500.0,
-        KD_MIN=0.0,
-        KD_MAX=5.0,
-    ),
-    "AK60-6": dict(
-        P_MIN=-12.5,
-        P_MAX=12.5,
-        V_MIN=-45.0,
-        V_MAX=45.0,
-        T_MIN=-15.0,
-        T_MAX=15.0,
-        KP_MIN=0.0,
-        KP_MAX=500.0,
-        KD_MIN=0.0,
-        KD_MAX=5.0,
-    ),
-    "AK70-10": dict(
-        P_MIN=-12.5,
-        P_MAX=12.5,
-        V_MIN=-50.0,
-        V_MAX=50.0,
-        T_MIN=-25.0,
-        T_MAX=25.0,
-        KP_MIN=0.0,
-        KP_MAX=500.0,
-        KD_MIN=0.0,
-        KD_MAX=5.0,
-    ),
-    "AK80-6": dict(
-        P_MIN=-12.5,
-        P_MAX=12.5,
-        V_MIN=-76.0,
-        V_MAX=76.0,
-        T_MIN=-12.0,
-        T_MAX=12.0,
-        KP_MIN=0.0,
-        KP_MAX=500.0,
-        KD_MIN=0.0,
-        KD_MAX=5.0,
-    ),
-    "AK80-9": dict(
-        P_MIN=-12.5,
-        P_MAX=12.5,
-        V_MIN=-50.0,
-        V_MAX=50.0,
-        T_MIN=-18.0,
-        T_MAX=18.0,
-        KP_MIN=0.0,
-        KP_MAX=500.0,
-        KD_MIN=0.0,
-        KD_MAX=5.0,
-    ),
-    "AK80-64": dict(
-        P_MIN=-12.5,
-        P_MAX=12.5,
-        V_MIN=-8.0,
-        V_MAX=8.0,
-        T_MIN=-144.0,
-        T_MAX=144.0,
-        KP_MIN=0.0,
-        KP_MAX=500.0,
-        KD_MIN=0.0,
-        KD_MAX=5.0,
-    ),
-    "AK80-8": dict(
-        P_MIN=-12.5,
-        P_MAX=12.5,
-        V_MIN=-37.5,
-        V_MAX=37.5,
-        T_MIN=-32.0,
-        T_MAX=32.0,
-        KP_MIN=0.0,
-        KP_MAX=500.0,
-        KD_MIN=0.0,
-        KD_MAX=5.0,
-    ),
-    "AK40-10": dict(
-        P_MIN=-12.5,
-        P_MAX=12.5,
-        V_MIN=-45.5,
-        V_MAX=45.5,
-        T_MIN=-5.0,
-        T_MAX=5.0,
-        KP_MIN=0.0,
-        KP_MAX=500.0,
-        KD_MIN=0.0,
-        KD_MAX=5.0,
-    ),
+    "AK10-9": dict(V_MIN=-50.0, V_MAX=50.0, T_MIN=-65.0, T_MAX=65.0),
+    "AK60-6": dict(V_MIN=-45.0, V_MAX=45.0, T_MIN=-15.0, T_MAX=15.0),
+    "AK70-10": dict(V_MIN=-50.0, V_MAX=50.0, T_MIN=-25.0, T_MAX=25.0),
+    "AK80-6": dict(V_MIN=-76.0, V_MAX=76.0, T_MIN=-12.0, T_MAX=12.0),
+    "AK80-9": dict(V_MIN=-50.0, V_MAX=50.0, T_MIN=-18.0, T_MAX=18.0),
+    "AK80-64": dict(V_MIN=-8.0, V_MAX=8.0, T_MIN=-144.0, T_MAX=144.0),
+    "AK80-8": dict(V_MIN=-37.5, V_MAX=37.5, T_MIN=-32.0, T_MAX=32.0),
+    "AK40-10": dict(V_MIN=-45.5, V_MAX=45.5, T_MIN=-5.0, T_MAX=5.0),
 }
 
 # Motor-side (pre-gearbox) torque constants (Nm/A), as published in each
-# motor's datasheet (e.g. AK40-10 KT = 0.056 Nm/A).
+# motor's datasheet (e.g. AK40-10 KT = 0.056 Nm/A).  Used to convert between
+# commanded output torque (Nm) and servo-mode phase current (A).
 TORQUE_CONSTANTS = {
     "AK10-9": 0.198,  # Nm/A
     "AK70-10": 0.123,  # Nm/A
@@ -137,17 +58,41 @@ TORQUE_CONSTANTS = {
 }
 
 # Gearbox reduction ratio (output:motor), i.e. the number after the dash in
-# the model name. The CAN protocol's torque field is measured at the output
-# shaft (post-gearbox), so recovering phase current needs both the motor-side
-# Kt above and this ratio: current = output_torque / (Kt * gear_ratio).
+# the model name.  Servo-mode torque is measured at the output shaft, while the
+# current command drives the rotor, so torque<->current needs both the
+# motor-side Kt above and this ratio: current = output_torque / (Kt * ratio).
 GEAR_RATIOS = {
     "AK10-9": 9,
+    "AK60-6": 6,
     "AK70-10": 10,
+    "AK80-6": 6,
+    "AK80-9": 9,
     "AK80-64": 64,
+    "AK80-8": 8,
     "AK40-10": 10,
 }
 
-# Motor error code mapping for human-readable messages
+# Rotor pole pairs (poles / 2).  Servo-mode *speed* is reported/commanded in
+# ERPM (electrical RPM = mechanical_rotor_RPM * pole_pairs), so converting
+# output-shaft rad/s <-> ERPM needs both the gear ratio and the pole pairs:
+#   ERPM = rad_s * (60 / 2pi) * gear_ratio * pole_pairs
+# The AK series uses a 21-pole-pair (42-pole) outrunner.  These values only
+# affect VELOCITY-mode scaling (position and torque modes are unaffected);
+# verify per motor and override with the ``pole_pairs`` parameter if needed.
+POLE_PAIRS = {
+    "AK10-9": 21,
+    "AK60-6": 14,
+    "AK70-10": 21,
+    "AK80-6": 21,
+    "AK80-9": 21,
+    "AK80-64": 21,
+    "AK80-8": 21,
+    "AK40-10": 21,
+}
+
+DEFAULT_POLE_PAIRS = 21
+
+# Motor error code mapping for human-readable messages (manual §5.2.1).
 MOTOR_ERROR_CODES = {
     0: "No fault - Motor operating normally",
     1: "Motor over-temperature fault - Motor temperature exceeds safe operating limits",
@@ -159,128 +104,9 @@ MOTOR_ERROR_CODES = {
     7: "Motor lock-up - Motor shaft mechanically blocked or seized",
 }
 
-# ===================== UTILITY FUNCTIONS =====================
-
-
-def clamp(x, lo, hi):
-    """Clamp a value between lower and upper bounds"""
-    return lo if x < lo else hi if x > hi else x
-
-
-def f2u(x, lo, hi, bits):
-    """
-    Convert float value to unsigned integer representation (used in CAN protocol).
-
-    Args:
-        x: Float value to convert
-        lo: Lower bound of float range
-        hi: Upper bound of float range
-        bits: Number of bits for integer representation
-
-    Returns:
-        Integer representation of the float value
-    """
-    x = clamp(x, lo, hi)
-    return int((x - lo) * (((1 << bits) - 1) / (hi - lo)))
-
-
-def u2f(u, lo, hi, bits):
-    """
-    Convert unsigned integer back to float value (used in CAN protocol).
-
-    Args:
-        u: Integer value to convert
-        lo: Lower bound of target float range
-        hi: Upper bound of target float range
-        bits: Number of bits in the integer representation
-
-    Returns:
-        Float value corresponding to the integer representation
-    """
-    u = max(0, min(u, (1 << bits) - 1))
-    return lo + (u / ((1 << bits) - 1)) * (hi - lo)
-
-
-def pack_mit(p, v, kp, kd, t, R):
-    """
-    Pack MIT control message parameters into CAN frame data bytes.
-
-    Args:
-        p: Position setpoint (rad)
-        v: Velocity setpoint (rad/s)
-        kp: Position gain
-        kd: Velocity gain
-        t: Torque feedforward (Nm)
-        R: Motor limits dictionary
-
-    Returns:
-        Byte array for CAN message
-    """
-    # Convert float values to integers with appropriate bit width
-    p_i = f2u(p, R["P_MIN"], R["P_MAX"], 16)  # 16 bits for position
-    v_i = f2u(v, R["V_MIN"], R["V_MAX"], 12)  # 12 bits for velocity
-    kp_i = f2u(kp, R["KP_MIN"], R["KP_MAX"], 12)  # 12 bits for position gain
-    kd_i = f2u(kd, R["KD_MIN"], R["KD_MAX"], 12)  # 12 bits for velocity gain
-    t_i = f2u(t, R["T_MIN"], R["T_MAX"], 12)  # 12 bits for torque
-
-    # Pack values into 8 bytes following MIT protocol format
-    return bytes(
-        [
-            (p_i >> 8) & 0xFF,  # Position (high byte)
-            p_i & 0xFF,  # Position (low byte)
-            (v_i >> 4) & 0xFF,  # Velocity (high byte)
-            ((v_i & 0x0F) << 4)
-            | ((kp_i >> 8) & 0x0F),  # Velocity (low nibble) + Kp (high nibble)
-            kp_i & 0xFF,  # Kp (low byte)
-            (kd_i >> 4) & 0xFF,  # Kd (high byte)
-            ((kd_i & 0x0F) << 4)
-            | ((t_i >> 8) & 0x0F),  # Kd (low nibble) + Torque (high nibble)
-            t_i & 0xFF,  # Torque (low byte)
-        ]
-    )
-
-
-def parse_reply(b, R):
-    """
-    Parse the CAN reply from the motor controller.
-
-    Args:
-        b: Byte array from CAN message
-        R: Motor limits dictionary
-
-    Returns:
-        Tuple of (driver_id, position, velocity, torque, temperature, error_code)
-        or None if invalid data
-    """
-    if len(b) != 8:
-        return None
-
-    drv = b[0]  # Driver ID (motor controller ID)
-    p_int = (b[1] << 8) | b[2]  # Position (16 bits)
-    v_int = (b[3] << 4) | (b[4] >> 4)  # Velocity (12 bits)
-    i_int = ((b[4] & 0x0F) << 8) | b[5]  # Torque (12 bits)
-    # Per CubeMars AK series MIT protocol, raw byte maps to -40~215 degC (Temperature = raw - 40)
-    temp = b[6] - 40  # Temperature (degC)
-    err = b[7]  # Error code (8 bits)
-
-    # Convert integer values back to physical units
-    p = u2f(p_int, R["P_MIN"], R["P_MAX"], 16)  # rad
-    v = u2f(v_int, R["V_MIN"], R["V_MAX"], 12)  # rad/s
-    tau = u2f(i_int, R["T_MIN"], R["T_MAX"], 12)  # Nm
-
-    return drv, p, v, tau, temp, err
-
 
 def get_error_message(error_code):
-    """
-    Get human-readable error message for motor error code.
-
-    Args:
-        error_code (int): Error code (0-7)
-
-    Returns:
-        str: Error message or unknown error if code is invalid
-    """
+    """Return a human-readable message for a motor error code."""
     return MOTOR_ERROR_CODES.get(error_code, f"Unknown error code: {error_code}")
 
 
@@ -289,31 +115,32 @@ def get_error_message(error_code):
 
 class MotorNode(Node):
     """
-    ROS2 Node for controlling a Cubemars actuator via CAN bus.
+    ROS2 Node for controlling a Cubemars actuator via CAN bus in servo mode.
 
-    This node handles:
-    - Communication with the motor via CAN
-    - Publishing motor state (position, velocity, torque, temperature)
-    - Receiving commands (MIT protocol and special commands)
-    - Managing motor startup/shutdown sequences
+    Handles:
+    - Servo-mode CAN communication with the motor (extended frames)
+    - Publishing motor state (position, velocity, torque, current, temperature)
+    - Receiving commands (generic MotorCommand and special commands)
+    - Managing motor enable/disable and neutral-hold behaviour
     """
 
     def __init__(self):
-        """Initialize the motor control node and its parameters"""
+        """Initialize the motor control node and its parameters."""
         super().__init__("motor_node")
 
         # ---- ROS Parameters ----
         self.declare_parameter("can_interface", "can0")  # CAN interface name
-        self.declare_parameter("can_id", 1)  # CAN ID for this motor
+        self.declare_parameter("can_id", 1)  # CAN node ID for this motor
         self.declare_parameter("motor_type", "AK70-10")  # Motor model
         self.declare_parameter("control_hz", 20.0)  # Control loop frequency
         self.declare_parameter("joint_name", "joint")  # Name for this joint/motor
-        self.declare_parameter("auto_start", False)  # Whether to auto-start the motor
+        self.declare_parameter("auto_start", False)  # Whether to auto-enable the motor
         self.declare_parameter("reverse_polarity", False)  # Reverse motor direction
-        self.declare_parameter("position_kp", 20.0)  # Kp for MotorCommand position mode
-        self.declare_parameter("position_kd", 1.0)  # Kd for MotorCommand position mode
-        self.declare_parameter("velocity_kd", 1.0)  # Kd for MotorCommand velocity mode
-        self.declare_parameter("cmd_timeout", 0.5)  # seconds before stale command is cleared (0 = disabled)
+        # pole_pairs / gear_ratio: 0 means "use the per-motor table default".
+        # Only affect VELOCITY-mode ERPM scaling and torque<->current scaling.
+        self.declare_parameter("pole_pairs", 0)
+        self.declare_parameter("gear_ratio", 0.0)
+        self.declare_parameter("cmd_timeout", 0.5)  # seconds before a stale cmd is cleared
 
         # Get parameters
         self.iface = self.get_parameter("can_interface").value
@@ -321,21 +148,37 @@ class MotorNode(Node):
         self.motor_type = self.get_parameter("motor_type").value
         if self.motor_type not in LIMITS:
             self.get_logger().error(
-                f"Unsupported motor type: {self.motor_type}. Supported types: {list(LIMITS.keys())}"
+                f"Unsupported motor type: {self.motor_type}. "
+                f"Supported types: {list(LIMITS.keys())}"
             )
             raise ValueError(f"Unsupported motor type: {self.motor_type}")
-        self.R = LIMITS[self.motor_type]  # Get motor limits for this type
+        self.R = LIMITS[self.motor_type]  # Physical limits for this motor
         self.joint_name = self.get_parameter("joint_name").value
-        self.control_dt = 1.0 / float(
-            self.get_parameter("control_hz").value
-        )  # Control period
+        self.control_hz = float(self.get_parameter("control_hz").value)
+        self.control_dt = 1.0 / self.control_hz  # Control period
         self.auto_start = bool(self.get_parameter("auto_start").value)
-        self.control_hz = self.get_parameter("control_hz").value
         self.reverse_polarity = bool(self.get_parameter("reverse_polarity").value)
-        self.position_kp = float(self.get_parameter("position_kp").value)
-        self.position_kd = float(self.get_parameter("position_kd").value)
-        self.velocity_kd = float(self.get_parameter("velocity_kd").value)
         self.cmd_timeout = float(self.get_parameter("cmd_timeout").value)
+
+        # Servo-unit conversion constants (with per-motor fallbacks).
+        pole_pairs = int(self.get_parameter("pole_pairs").value)
+        self.pole_pairs = pole_pairs if pole_pairs > 0 else POLE_PAIRS.get(
+            self.motor_type, DEFAULT_POLE_PAIRS
+        )
+        gear_ratio = float(self.get_parameter("gear_ratio").value)
+        self.gear_ratio = gear_ratio if gear_ratio > 0 else float(
+            GEAR_RATIOS.get(self.motor_type, 1)
+        )
+        self.kt = TORQUE_CONSTANTS.get(self.motor_type)  # Nm/A, motor-side
+        # Current limit (A) that maps to this motor's torque limit; capped at
+        # the servo encoding maximum (±60 A).
+        if self.kt:
+            torque_current = abs(
+                sp.torque_to_current(self.R["T_MAX"], self.kt, self.gear_ratio)
+            )
+            self.current_max_a = min(torque_current, sp.CURRENT_MAX_A)
+        else:
+            self.current_max_a = sp.CURRENT_MAX_A
 
         # Log parameters for debugging
         self.get_logger().info(
@@ -346,18 +189,29 @@ class MotorNode(Node):
             Control Hz: {self.control_hz}
             Auto Start: {self.auto_start}
             Reverse Polarity: {self.reverse_polarity}
-            Position Kp: {self.position_kp}
-            Position Kd: {self.position_kd}
-            Velocity Kd: {self.velocity_kd}
+            Gear ratio: {self.gear_ratio}
+            Pole pairs: {self.pole_pairs}
+            Kt (Nm/A): {self.kt}
+            Current limit (A): {self.current_max_a:.2f}
+            Mode: SERVO (no Kp/Kd)
             """
         )
 
-        self.arb = self.can_id & 0x7FF  # CAN arbitration ID (standard 11-bit frame)
+        if not self.kt:
+            self.get_logger().warn(
+                f"No torque constant for {self.motor_type}; TORQUE-mode commands and "
+                f"torque feedback will be zero. Add it to TORQUE_CONSTANTS to enable."
+            )
+
+        self.node_id = self.can_id & 0xFF  # Servo source node ID (low byte of frames)
         try:
             self.bus = can.interface.Bus(bustype="socketcan", channel=self.iface)
             try:
-                # Filter to only receive messages with our CAN ID
-                self.bus.set_filters([{"can_id": self.arb, "can_mask": 0x7FF}])
+                # Servo feedback frames are extended (29-bit) with the motor's
+                # node ID in the low byte; match those.
+                self.bus.set_filters(
+                    [{"can_id": self.node_id, "can_mask": 0xFF, "extended": True}]
+                )
             except Exception:
                 pass  # Some interfaces don't support filtering
         except Exception as e:
@@ -367,7 +221,6 @@ class MotorNode(Node):
             raise
 
         # ---- ROS Publishers and Subscribers ----
-        # Publishers
         self.pub_err = self.create_publisher(
             String, f"/{self.joint_name}/error_code", 10
         )
@@ -379,13 +232,16 @@ class MotorNode(Node):
         )
 
         # Subscribers
-        # MIT command format: [position, velocity, Kp, Kd, torque]
-        self.sub_mit_cmd = self.create_subscription(
-            Float64MultiArray, f"/{self.joint_name}/mit_cmd", self.on_cmd, 10
-        )
         # Generic actuation command used by the leg kinematics stack.
         self.sub_motor_command = self.create_subscription(
             MotorCommand, f"/{self.joint_name}/command", self.on_motor_command, 10
+        )
+        # Raw servo command (bench testing): [mode, value].
+        #   mode 3 = position (rad), 2 = velocity (rad/s), 1 = torque (Nm),
+        #   0 = duty [-1, 1].  A legacy 5-element MIT tuple [p, v, kp, kd, t] is
+        #   also accepted -- the gains are ignored (servo mode has no Kp/Kd).
+        self.sub_raw_cmd = self.create_subscription(
+            Float64MultiArray, f"/{self.joint_name}/servo_cmd", self.on_raw_cmd, 10
         )
         # Special commands: start, exit, zero, clear
         self.sub_special = self.create_subscription(
@@ -394,134 +250,154 @@ class MotorNode(Node):
 
         # ---- Internal State ----
         self._lock = threading.Lock()  # Thread safety for command access
-        self.cmd = [0.0, 0.0, 0.0, 0.0, 0.0]  # Current command [p, v, kp, kd, t]
-        self._started = False  # Whether the motor is started
-        self._neutral_hold = (
-            False  # When True, sends zero commands regardless of cmd cache
-        )
+        # Cached command: (control_mode, value_a, value_b). value_a/value_b are
+        # already in servo-facing SI units (rad, rad/s, Nm, or duty).
+        self.cmd_mode = MotorCommand.CONTROL_MODE_POSITION
+        self.cmd_pos = 0.0  # rad
+        self.cmd_vel = 0.0  # rad/s
+        self.cmd_torq = 0.0  # Nm
+        self.cmd_duty = 0.0  # [-1, 1]
+        self._started = False  # Whether the motor is enabled
+        self._neutral_hold = True  # When True, release torque regardless of cmd cache
         self._last_cmd_time = None  # Monotonic timestamp of last received command
 
-        # Absolute position tracking (unwrapping)
-        self._last_p = None  # Last raw position reading
-        self._p_abs = 0.0  # Unwrapped absolute position
-        self._span = self.R["P_MAX"] - self.R["P_MIN"]  # Position range
+        # Absolute position tracking (unwrapping), in radians at the output shaft.
+        self._last_pos_rad = None
+        self._p_abs = 0.0
+        self._span_rad = sp.deg_to_rad(sp.FB_POS_SPAN_DEG)  # feedback wrap span
 
         # ---- Timers ----
-        # Control timer sends commands at the specified frequency
         self.create_timer(self.control_dt, self._tick_control)
 
         # ---- CAN Receiver Thread ----
-        self._stop = False  # Flag to stop the RX thread
+        self._stop = False
         self._rx = threading.Thread(target=self._rx_loop, daemon=True)
         self._rx.start()
 
-        # Optional auto-start on initialization
+        # Optional auto-enable on initialization
         if self.auto_start and not self._started:
-            self._send_special(0xFC)  # Send START command (0xFC)
             self._started = True
             self.get_logger().info(f"Auto-starting motor {self.joint_name}")
 
     # ---- Command Callbacks ----
-    def on_cmd(self, msg):
-        """
-        Handle MIT command message: [position, velocity, Kp, Kd, torque]
-
-        Args:
-            msg: Float64MultiArray containing the command values
-        """
-        if len(msg.data) != 5:
-            self.get_logger().warn(
-                "mit_cmd expects [position, velocity, Kp, Kd, torque]"
-            )
-            return
-
-        with self._lock:
-            self.cmd = list(map(float, msg.data))
-            self._neutral_hold = False  # New command cancels any previous "clear" hold
-            self._last_cmd_time = time.monotonic()
-
-        # Auto-start the motor on first command if not already started
-        # if not self._started:
-        #     self._send_special(0xFC)  # START command
-        #     self._started = True
-        #     self.get_logger().info(f"Auto-starting motor {self.joint_name} on first command")
-
     def on_motor_command(self, msg):
         """
-        Bridge the generic MotorCommand topic into the cached MIT command.
+        Handle the generic MotorCommand used by the SELQIE leg-control stack.
 
-        The rest of the SELQIE leg-control stack publishes MotorCommand messages
-        on /motorN/command. Cubemars motors are driven with MIT commands in the
-        form [position, velocity, Kp, Kd, torque], so this callback supplies the
-        gains that are not present in MotorCommand and lets _tick_control send
-        the packed CAN frame at the configured control rate.
-
-        Args:
-            msg: actuation_msgs/MotorCommand message
+        MotorCommand carries setpoints in output-shaft SI units (rad, rad/s,
+        Nm).  The control mode selects which single servo frame is sent by the
+        control loop:
+          - POSITION -> servo position mode (degrees)
+          - VELOCITY -> servo speed mode (ERPM)
+          - TORQUE   -> servo current mode (amperes)
         """
         p = float(msg.pos_setpoint)
         v = float(msg.vel_setpoint)
         t = float(msg.torq_setpoint)
 
-        if msg.control_mode == MotorCommand.CONTROL_MODE_POSITION:
-            kp = self.position_kp
-            kd = self.position_kd
-        elif msg.control_mode == MotorCommand.CONTROL_MODE_VELOCITY:
-            p = 0.0
-            kp = 0.0
-            kd = self.velocity_kd
-        elif msg.control_mode == MotorCommand.CONTROL_MODE_TORQUE:
-            p = 0.0
-            v = 0.0
-            kp = 0.0
-            kd = 0.0
-        else:
+        if msg.control_mode not in (
+            MotorCommand.CONTROL_MODE_POSITION,
+            MotorCommand.CONTROL_MODE_VELOCITY,
+            MotorCommand.CONTROL_MODE_TORQUE,
+        ):
             self.get_logger().warn(
                 f"Unsupported MotorCommand control_mode {msg.control_mode}; command ignored"
             )
             return
 
         with self._lock:
-            self.cmd = [p, v, kp, kd, t]
+            self.cmd_mode = msg.control_mode
+            self.cmd_pos = p
+            self.cmd_vel = v
+            self.cmd_torq = t
+            self.cmd_duty = 0.0
             self._neutral_hold = False  # New command cancels any previous "clear" hold
             self._last_cmd_time = time.monotonic()
 
-    def on_special(self, msg):
+    def on_raw_cmd(self, msg):
         """
-        Handle special command message for motor control
+        Handle a raw servo command for bench testing.
 
-        Args:
-            msg: String message with the command name
+        Accepts ``[mode, value]`` where mode is 3=position (rad), 2=velocity
+        (rad/s), 1=torque (Nm), 0=duty.  For backward compatibility a 5-element
+        MIT tuple ``[p, v, kp, kd, t]`` is also accepted; the Kp/Kd gains are
+        ignored (servo mode has no gains) and the command is treated as a
+        position move to ``p``.
         """
+        data = list(map(float, msg.data))
+        if len(data) == 5:
+            # Legacy MIT tuple [p, v, kp, kd, t]: gains have no meaning in servo
+            # mode, so drive to the requested position.
+            mode = float(MotorCommand.CONTROL_MODE_POSITION)
+            value = data[0]
+        elif len(data) == 2:
+            mode, value = data[0], data[1]
+        else:
+            self.get_logger().warn(
+                "servo_cmd expects [mode, value] (or legacy [p, v, kp, kd, t])"
+            )
+            return
+
+        mode = int(mode)
+        with self._lock:
+            self.cmd_pos = 0.0
+            self.cmd_vel = 0.0
+            self.cmd_torq = 0.0
+            self.cmd_duty = 0.0
+            if mode == MotorCommand.CONTROL_MODE_POSITION:
+                self.cmd_mode = MotorCommand.CONTROL_MODE_POSITION
+                self.cmd_pos = value
+            elif mode == MotorCommand.CONTROL_MODE_VELOCITY:
+                self.cmd_mode = MotorCommand.CONTROL_MODE_VELOCITY
+                self.cmd_vel = value
+            elif mode == MotorCommand.CONTROL_MODE_TORQUE:
+                self.cmd_mode = MotorCommand.CONTROL_MODE_TORQUE
+                self.cmd_torq = value
+            elif mode == 0:
+                self.cmd_mode = 0  # duty
+                self.cmd_duty = value
+            else:
+                self.get_logger().warn(f"servo_cmd unknown mode {mode}; ignored")
+                return
+            self._neutral_hold = False
+            self._last_cmd_time = time.monotonic()
+
+    def on_special(self, msg):
+        """Handle a special command string: start | exit | zero | clear."""
         m = msg.data.strip().lower()
 
         if m == "start":
-            # Start the motor (MIT control mode)
+            # Enable command output.
             if not self._started:
-                self._send_special(0xFC)  # START command (0xFC)
                 self._started = True
                 self.get_logger().info(f"Starting motor {self.joint_name}")
 
         elif m == "exit":
-            # Exit MIT control mode
-            if self._started:
-                self._send_special(0xFD)  # EXIT command (0xFD)
-                self._started = False
-                self.get_logger().info(f"Exiting MIT mode for motor {self.joint_name}")
+            # Release torque and stop driving the motor.
+            self._send_current(0.0)
+            with self._lock:
+                self._neutral_hold = True
+            self._started = False
+            self.get_logger().info(f"Exiting (releasing) motor {self.joint_name}")
 
         elif m == "zero":
-            # Zero/home the encoder
-            self._send_special(0xFE)  # ZERO command (0xFE)
+            # Set the current position as the (temporary) origin.
+            self._send_origin(0)
+            with self._lock:
+                # Reset unwrapping so abs_position restarts from zero.
+                self._last_pos_rad = None
+                self._p_abs = 0.0
             self.get_logger().info(f"Zeroing encoder for motor {self.joint_name}")
 
         elif m == "clear":
-            # Clear all commands (send zeros and hold)
+            # Neutral hold: release torque (zero current) until a new command.
             with self._lock:
-                self.cmd = [0.0, 0.0, 0.0, 0.0, 0.0]  # Clear command cache
-                self._neutral_hold = True  # Hold zeros until new command
-
-            # Send zero command immediately
-            self._send_mit_once(0, 0, 0, 0, 0)
+                self._neutral_hold = True
+                self.cmd_pos = 0.0
+                self.cmd_vel = 0.0
+                self.cmd_torq = 0.0
+                self.cmd_duty = 0.0
+            self._send_current(0.0)
             self.get_logger().info(f"Clearing commands for motor {self.joint_name}")
 
         else:
@@ -531,13 +407,12 @@ class MotorNode(Node):
 
     # ---- Control Loop ----
     def _tick_control(self):
-        """Periodic control loop that sends commands to the motor"""
+        """Periodic control loop that sends one servo frame to the motor."""
         if self.cmd_timeout > 0:
             with self._lock:
                 if self._last_cmd_time is not None:
                     elapsed = time.monotonic() - self._last_cmd_time
                     if elapsed > self.cmd_timeout:
-                        self.cmd = [0.0, 0.0, 0.0, 0.0, 0.0]
                         self._neutral_hold = True
                         self._last_cmd_time = None
                         self.get_logger().warn(
@@ -545,185 +420,184 @@ class MotorNode(Node):
                         )
 
         with self._lock:
-            # If in neutral hold mode, send zeros; otherwise send cached command
-            p, v, kp, kd, t = ([0.0] * 5) if self._neutral_hold else self.cmd
+            neutral = self._neutral_hold
+            mode = self.cmd_mode
+            pos = self.cmd_pos
+            vel = self.cmd_vel
+            torq = self.cmd_torq
+            duty = self.cmd_duty
 
-        # Apply reverse polarity if configured
+        # Do not drive the motor until it has been started.  Neutral hold and
+        # the un-started state both release torque (zero current), matching the
+        # MIT node's "all zeros" behaviour.
+        if not self._started or neutral:
+            self._send_current(0.0)
+            return
+
+        if mode == MotorCommand.CONTROL_MODE_POSITION:
+            self._send_position(pos)
+        elif mode == MotorCommand.CONTROL_MODE_VELOCITY:
+            self._send_velocity(vel)
+        elif mode == MotorCommand.CONTROL_MODE_TORQUE:
+            self._send_torque(torq)
+        elif mode == 0:
+            self._send_duty(duty)
+        else:
+            self._send_current(0.0)
+
+    # ---- Servo frame senders (all inputs are output-shaft SI units) ----
+    def _send(self, can_id, data):
+        """Transmit an extended (29-bit) CAN frame."""
+        try:
+            self.bus.send(
+                can.Message(arbitration_id=can_id, data=data, is_extended_id=True)
+            )
+        except can.CanError:
+            self.get_logger().error(
+                f"Failed to send CAN frame to motor {self.joint_name}"
+            )
+
+    def _send_position(self, pos_rad):
+        """Command an output-shaft position (rad)."""
         if self.reverse_polarity:
-            p = -p  # Invert position
-            v = -v  # Invert velocity
-            t = -t  # Invert torque
+            pos_rad = -pos_rad
+        can_id, data = sp.pack_pos(self.node_id, sp.rad_to_deg(pos_rad))
+        self._send(can_id, data)
 
-        # Pack the command into CAN message format
-        data = pack_mit(p, v, kp, kd, t, self.R)
-
-        try:
-            # Send the command over CAN
-            self.bus.send(
-                can.Message(arbitration_id=self.arb, data=data, is_extended_id=False)
-            )
-        except can.CanError:
-            self.get_logger().error(
-                f"Failed to send CAN message to motor {self.joint_name}"
-            )
-
-    # ---- Helper Methods ----
-    def _send_special(self, code):
-        """
-        Send special command code to the motor
-
-        Args:
-            code: Command code byte (e.g. 0xFC for START)
-        """
-        # Special commands use all 0xFF bytes except the last one
-        d = b"\xff" * 7 + bytes([code & 0xFF])
-
-        try:
-            self.bus.send(
-                can.Message(arbitration_id=self.arb, data=d, is_extended_id=False)
-            )
-        except can.CanError:
-            self.get_logger().error(
-                f"Failed to send special command {hex(code)} to motor {self.joint_name}"
-            )
-
-    def _send_mit_once(self, p, v, kp, kd, t):
-        """
-        Send one MIT protocol command to the motor
-
-        Args:
-            p: Position setpoint (rad)
-            v: Velocity setpoint (rad/s)
-            kp: Position gain
-            kd: Velocity gain
-            t: Torque feedforward (Nm)
-        """
-        # Apply reverse polarity if configured
+    def _send_velocity(self, vel_rads):
+        """Command an output-shaft velocity (rad/s)."""
+        vel_rads = sp.clamp(vel_rads, self.R["V_MIN"], self.R["V_MAX"])
         if self.reverse_polarity:
-            p = -p  # Invert position
-            v = -v  # Invert velocity
-            t = -t  # Invert torque
+            vel_rads = -vel_rads
+        erpm = sp.rads_to_erpm(vel_rads, self.gear_ratio, self.pole_pairs)
+        can_id, data = sp.pack_rpm(self.node_id, erpm)
+        self._send(can_id, data)
 
-        d = pack_mit(p, v, kp, kd, t, self.R)
+    def _send_torque(self, torque_nm):
+        """Command an output-shaft torque (Nm) via the current loop."""
+        torque_nm = sp.clamp(torque_nm, self.R["T_MIN"], self.R["T_MAX"])
+        if self.reverse_polarity:
+            torque_nm = -torque_nm
+        if self.kt:
+            current_a = sp.torque_to_current(torque_nm, self.kt, self.gear_ratio)
+        else:
+            current_a = 0.0  # Cannot map torque without a torque constant.
+        self._send_current(current_a)
 
-        try:
-            self.bus.send(
-                can.Message(arbitration_id=self.arb, data=d, is_extended_id=False)
-            )
-        except can.CanError:
-            self.get_logger().error(
-                f"Failed to send MIT command to motor {self.joint_name}"
-            )
+    def _send_current(self, current_a):
+        """Command a raw phase current (A)."""
+        can_id, data = sp.pack_current(self.node_id, current_a, self.current_max_a)
+        self._send(can_id, data)
+
+    def _send_duty(self, duty):
+        """Command a raw duty cycle [-1, 1]."""
+        if self.reverse_polarity:
+            duty = -duty
+        can_id, data = sp.pack_duty(self.node_id, duty)
+        self._send(can_id, data)
+
+    def _send_origin(self, mode):
+        """Send a set-origin frame (0 = temporary, 1 = permanent)."""
+        can_id, data = sp.pack_origin(self.node_id, mode)
+        self._send(can_id, data)
 
     def _rx_loop(self):
-        """
-        Background thread that receives and processes CAN messages from the motor
-        """
+        """Background thread that receives and processes servo status frames."""
         while not self._stop:
-            # Wait for a CAN message (with timeout)
             rx = self.bus.recv(timeout=0.1)
-
-            # Skip if no message or wrong ID/length
-            if not rx or rx.arbitration_id != self.arb or len(rx.data) != 8:
+            if not rx or not rx.is_extended_id or len(rx.data) != 8:
                 continue
 
-            # Parse the motor reply
-            s = parse_reply(rx.data, self.R)
-            if not s:
+            packet_id, node_id = sp.parse_status_id(rx.arbitration_id)
+            # Only accept status (0x29) frames addressed from our motor.
+            if node_id != self.node_id or packet_id != sp.CAN_PACKET_STATUS:
                 continue
 
-            drv, p, v, tau, temp, err = s
-
-            # Verify the driver ID matches our expected ID (low byte of arbitration ID)
-            if drv != (self.arb & 0xFF):
+            parsed = sp.parse_status(rx.data)
+            if not parsed:
                 continue
+            pos_deg, spd_erpm, current_a, temp_c, err = parsed
 
-            # Apply reverse polarity to received values if configured
+            # Convert servo units -> output-shaft SI units.
+            pos_rad = sp.deg_to_rad(pos_deg)
+            vel_rads = sp.erpm_to_rads(spd_erpm, self.gear_ratio, self.pole_pairs)
+            torque_nm = (
+                sp.current_to_torque(current_a, self.kt, self.gear_ratio)
+                if self.kt
+                else 0.0
+            )
+
+            # Apply reverse polarity to received values if configured.
             if self.reverse_polarity:
-                p = -p  # Invert position
-                v = -v  # Invert velocity
-                tau = -tau  # Invert torque
+                pos_rad = -pos_rad
+                vel_rads = -vel_rads
+                current_a = -current_a
+                torque_nm = -torque_nm
 
-            # ---- Process position data for unwrapping ----
-            # Handle position unwrapping to track continuous rotation beyond ±12.5 rad
-            if self._last_p is None:
-                # First reading - initialize absolute position
-                self._p_abs = p
+            # ---- Position unwrapping (continuous rotation tracking) ----
+            if self._last_pos_rad is None:
+                self._p_abs = pos_rad
             else:
-                # Calculate position change, handling wraparound
-                dp = p - self._last_p
-
-                # Detect and correct for wraparound (e.g. going from +12.4 to -12.4 rad)
-                if dp > 0.5 * self._span:  # Wraparound in negative direction
-                    dp -= self._span
-                if dp < -0.5 * self._span:  # Wraparound in positive direction
-                    dp += self._span
-
-                # Update absolute position
+                dp = pos_rad - self._last_pos_rad
+                if dp > 0.5 * self._span_rad:
+                    dp -= self._span_rad
+                elif dp < -0.5 * self._span_rad:
+                    dp += self._span_rad
                 self._p_abs += dp
+            self._last_pos_rad = pos_rad
 
-            # Store current position for next iteration
-            self._last_p = p
-
-            # ---- Publish motor data ----
-            # Publish temperature separately
-
-            # Publish error code with human-readable message
+            # ---- Publish error code with human-readable message ----
             error_code = String()
             error_code.data = f"Error Code {err}: {get_error_message(err)}"
             self.pub_err.publish(error_code)
 
-            # Publish complete motor state
+            # ---- Publish complete motor state ----
             ms = MotorState()
-            ms.name = self.joint_name  # Motor/joint name
-            ms.position = p  # Position in rad (raw)
-            ms.abs_position = self._p_abs  # Absolute position in rad (unwrapped)
-            ms.velocity = v  # Velocity in rad/s
-            ms.torque = tau  #  Torque in Nms (output shaft, i.e. post-gearbox)
-            kt = TORQUE_CONSTANTS.get(self.motor_type)  # Nm/A, motor-side (pre-gearbox)
-            gear_ratio = GEAR_RATIOS.get(self.motor_type)
-            # output_torque = Kt * current * gear_ratio  =>  current = output_torque / (Kt * gear_ratio)
-            ms.current = (tau / (kt * gear_ratio)) if kt and gear_ratio else 0.0  # current in A
-            ms.temperature = temp  # Temperature in °C
+            ms.name = self.joint_name
+            ms.position = pos_rad  # rad (raw, wrapped within feedback range)
+            ms.abs_position = self._p_abs  # rad (unwrapped)
+            ms.velocity = vel_rads  # rad/s
+            ms.torque = torque_nm  # Nm (output shaft)
+            ms.current = current_a  # A (motor phase current)
+            ms.temperature = int(temp_c)  # degC
             self.pub_state.publish(ms)
 
-            # Publish MotorEstimate for leg kinematics (uses abs_position for unwrapped angle)
+            # ---- Publish MotorEstimate for leg kinematics (unwrapped angle) ----
             me = MotorEstimate()
             me.pos_estimate = self._p_abs
-            me.vel_estimate = v
-            me.torq_estimate = tau
+            me.vel_estimate = vel_rads
+            me.torq_estimate = torque_nm
             self.pub_estimate.publish(me)
 
     def destroy_node(self):
-        """Clean up resources when the node is shutting down"""
-        self._send_special(0xFD)  # EXIT command (0xFD)
-        self._stop = True  # Signal RX thread to stop
+        """Clean up resources when the node is shutting down."""
+        # Release torque so the motor does not hold a stale command.
+        self._send_current(0.0)
+        self._stop = True
 
         try:
-            self._rx.join(timeout=0.3)  # Wait for RX thread to terminate
-        except:
+            self._rx.join(timeout=0.3)
+        except Exception:
             pass
 
         try:
             if hasattr(self.bus, "shutdown"):
-                self.bus.shutdown()  # Close CAN bus connection
-        except:
+                self.bus.shutdown()
+        except Exception:
             pass
 
-        super().destroy_node()  # Call parent class cleanup
+        super().destroy_node()
 
 
 def main(args=None):
-    """Main entry point for the motor node"""
+    """Main entry point for the motor node."""
     rclpy.init(args=args)
     node = MotorNode()
 
     try:
-        rclpy.spin(node)  # Keep the node running
+        rclpy.spin(node)
     except KeyboardInterrupt:
-        # Handle graceful shutdown on Ctrl+C
         pass
 
-    # Clean up
     node.destroy_node()
     rclpy.shutdown()
