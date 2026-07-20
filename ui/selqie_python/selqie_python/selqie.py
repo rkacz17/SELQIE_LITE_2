@@ -215,14 +215,22 @@ class SELQIE(Node):
         self._latch_pub = self.create_publisher(Bool, 'servo/latch', QOS_RELIABLE())
 
     def init_recording(self):
-        self.ROSBAG_RECORD_TOPICS = ["motor0/motor_state", "motor1/motor_state", "motor2/motor_state", "motor3/motor_state", "motor4/motor_state", "motor5/motor_state", "motor6/motor_state", "motor7/motor_state",
-                                     "motor0/error_code", "motor1/error_code", "motor2/error_code", "motor3/error_code", "motor4/error_code", "motor5/error_code", "motor6/error_code", "motor7/error_code",
-                                     "legFL/command", "legRL/command", "legRR/command", "legFR/command",
-                                     "stereo/left/image_raw", "stereo/right/image_raw", "lights/pwm",
-                                     "imu/data", "bar100/depth", "bar100/temperature",
-                                     "gait", "cmd_vel/raw", "cmd_vel", "goal_pose", "goal_pose/local",
-                                     "gait/transition", "gait/vel_estimate", "gait_planner/path",
-                                     "odom", "set_pose", "walk_planner/path"]
+        motor_topics = [f'motor{i}/{suffix}'
+                        for i in range(self.NUM_MOTORS)
+                        for suffix in ('motor_state', 'error_code', 'command', 'special_cmd')]
+        leg_topics = [f'leg{name}/{suffix}'
+                      for name in self.LEG_NAMES
+                      for suffix in ('command', 'estimate', 'trajectory')]
+        gait_vel_estimate_topics = [f'vel_estimate/{gait}' for gait in ('walk', 'swim', 'jump', 'stand', 'sink')]
+
+        self.ROSBAG_RECORD_TOPICS = motor_topics + leg_topics + [
+            "stereo/left/image_raw", "stereo/right/image_raw", "lights/pwm",
+            "imu/data", "imu/data/calibrated", "bar100/pressure", "bar100/temperature", "bar100/pose",
+            "/tinybms/pack_voltage",
+            "gait", "cmd_vel/raw", "cmd_vel", "goal_pose", "goal_pose/local",
+            "gait/transition", "gait_planner/path", "walk_planner/path",
+            "odom", "led_colors", "servo/latch",
+        ] + gait_vel_estimate_topics
         self.ROSBAG_SAVE_FOLDER = '/home/selqie/rosbags'
         self._rosbag_process = None
 
@@ -568,13 +576,18 @@ class SELQIE(Node):
         """Check if the rosbag recording process is running."""
         return self._rosbag_process is not None
 
-    def start_recording(self):
-        """Start recording rosbag data to the specified output folder."""
+    def start_recording(self, tag: Optional[str] = None):
+        """Start recording rosbag data to the specified output folder.
+
+        If provided, `tag` is appended to the timestamp-based bag name
+        (e.g. to describe the gait, frequency, and number of loops being run).
+        """
         if self.is_recording():
             return
         timestamp = datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
-        self._rosbag_process = subprocess.Popen(['ros2', 'bag', 'record', '-o', 
-                                                 os.path.join(self.ROSBAG_SAVE_FOLDER, timestamp)] 
+        bag_name = f'{timestamp}_{tag}' if tag else timestamp
+        self._rosbag_process = subprocess.Popen(['ros2', 'bag', 'record', '-o',
+                                                 os.path.join(self.ROSBAG_SAVE_FOLDER, bag_name)]
                                                  + self.ROSBAG_RECORD_TOPICS, stdin=subprocess.DEVNULL)
 
     def stop_recording(self):
