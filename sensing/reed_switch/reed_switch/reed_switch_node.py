@@ -1,49 +1,35 @@
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import Bool
-
-import Jetson.GPIO as GPIO
+from std_msgs.msg import Bool, Float32
 
 
 class ReedSwitchNode(Node):
     """
-    Polls a digital GPIO pin connected to a reed switch and publishes
-    the switch state on 'reed_switch/closed' (True = magnet present / switch closed).
+    Converts the raw GPIO reading published by jetson_drivers' gpio_node
+    (subscribed here on 'gpio/in') into the reed switch state on
+    'reed_switch/closed' (True = magnet present / switch closed).
     """
 
     def __init__(self):
         super().__init__('reed_switch_node')
 
-        self.declare_parameter('gpio_pin', 38)
-        self.declare_parameter('frequency', 50.0)
         self.declare_parameter('active_high', True)
-
-        self._pin = self.get_parameter('gpio_pin').value
-        frequency = self.get_parameter('frequency').value
         self._active_high = self.get_parameter('active_high').value
 
-        GPIO.setmode(GPIO.BOARD)
-        GPIO.setup(self._pin, GPIO.IN)
-
         self._pub = self.create_publisher(Bool, 'reed_switch/closed', 10)
-        self.create_timer(1.0 / frequency, self._poll)
+        self._sub = self.create_subscription(Float32, 'gpio/in', self._gpio_callback, 10)
 
         self.get_logger().info(
-            f'Reed switch node started on GPIO pin {self._pin} '
-            f'(active_high={self._active_high}, {frequency} Hz)'
+            f'Reed switch node started (active_high={self._active_high})'
         )
 
-    def _poll(self):
-        raw = GPIO.input(self._pin)
-        closed = bool(raw) if self._active_high else not bool(raw)
+    def _gpio_callback(self, msg: Float32):
+        raw = bool(msg.data)
+        closed = raw if self._active_high else not raw
 
-        msg = Bool()
-        msg.data = closed
-        self._pub.publish(msg)
-
-    def destroy_node(self):
-        GPIO.cleanup()
-        super().destroy_node()
+        out = Bool()
+        out.data = closed
+        self._pub.publish(out)
 
 
 def main(args=None):

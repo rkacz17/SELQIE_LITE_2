@@ -103,14 +103,20 @@ sudo usermod -a -G spi $USER
 
 **Hardware:** Digital leak detection board connected to **Pin 15 (SOC_GPIO27)**.
 
-**Driver:** `leak_sensor/leak_sensor_node.py` polls the GPIO pin at 10 Hz and publishes `True` when a leak is detected. Logs a throttled warning every second while a leak is active.
+**Driver:** `leak_sensor.launch.py` starts a `jetson_drivers/gpio_node` configured as an input on pin 35, polling at 10 Hz and publishing the raw pin state as `Float32` on `leak/gpio_in`. `leak_sensor/leak_sensor_node.py` subscribes to `leak/gpio_in`, converts it to a boolean per `active_high`, and republishes it on `leak/detected`. Logs a throttled warning every second while a leak is active.
 
-### Node Parameters
+### `gpio_node` Parameters (set in `leak_sensor.launch.py`)
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `gpio_pin` | `35` | BOARD pin number |
+| `is_output` | `false` | Configures the pin as an input |
 | `frequency` | `10.0` | Poll rate in Hz |
+
+### `leak_sensor_node` Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
 | `active_high` | `true` | `true` = pin HIGH means leak present |
 
 ### Published Topic
@@ -131,14 +137,20 @@ sudo usermod -a -G spi $USER
 
 Use cases: detecting hull panel closure (magnet on the lid), triggering autonomous behavior when the robot is deployed.
 
-**Driver:** `reed_switch/reed_switch_node.py` polls at 50 Hz.
+**Driver:** `reed_switch.launch.py` starts a `jetson_drivers/gpio_node` configured as an input on pin 38, polling at 50 Hz and publishing the raw pin state as `Float32` on `reed_switch/gpio_in`. `reed_switch/reed_switch_node.py` subscribes to `reed_switch/gpio_in`, converts it to a boolean per `active_high`, and republishes it on `reed_switch/closed`.
 
-### Node Parameters
+### `gpio_node` Parameters (set in `reed_switch.launch.py`)
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `gpio_pin` | `38` | BOARD pin number |
+| `is_output` | `false` | Configures the pin as an input |
 | `frequency` | `50.0` | Poll rate in Hz |
+
+### `reed_switch_node` Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
 | `active_high` | `true` | `true` = pin HIGH means switch closed |
 
 ### Published Topic
