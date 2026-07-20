@@ -154,6 +154,51 @@ class SELQIETerminal(Cmd):
             files = os.listdir(self._selqie.TRAJECTORIES_FOLDER)
             return [f for f in files if f.startswith(text)]
 
+    def do_run_trajectory_record(self, line : str):
+        """ Run a trajectory file or sequence of files, recording a rosbag for the duration of the movement """
+        args = line.split()
+        if len(args) == 0 or len(args) % 3 != 0:
+            print("Usage: run_trajectory_record <file1> <num_loops1> <frequency1> <file2> <num_loops2> <frequency2> ...")
+            return
+        if self._selqie.is_recording():
+            print("Already recording; stop the current recording first")
+            return
+        try:
+            specs = [(args[i], int(args[i+1]), float(args[i+2])) for i in range(0, len(args), 3)]
+        except ValueError:
+            print("Invalid number of loops or frequency")
+            return
+
+        tag = "+".join(
+            f"{os.path.splitext(os.path.basename(file))[0]}_{frequency:g}Hz_{num_loops}x"
+            for file, num_loops, frequency in specs
+        )
+        self._selqie.start_recording(tag)
+        print(f"Started recording rosbag (tag: {tag})")
+        try:
+            for file, num_loops, frequency in specs:
+                rate = self._selqie.create_rate(frequency)
+                trajectories = self._selqie.get_leg_trajectories_from_file(file, frequency)
+                print(f"Running trajectory for {num_loops} loops at {frequency} Hz")
+                for i in range(num_loops):
+                    print(f"  Loop {i+1}/{num_loops}")
+                    self._selqie.run_leg_trajectories(trajectories)
+                    rate.sleep()
+                print("Finished trajectory")
+        except ValueError:
+            print("Invalid number of loops or frequency")
+        except FileNotFoundError:
+            print("File not found")
+        finally:
+            self._selqie.stop_recording()
+            print("Stopped recording rosbag")
+
+    def complete_run_trajectory_record(self, text, line, begidx, endidx):
+        """ Autocomplete for run_trajectory_record """
+        if len(line.split()) % 3 == 1 or len(line.split()) % 3 == 2:
+            files = os.listdir(self._selqie.TRAJECTORIES_FOLDER)
+            return [f for f in files if f.startswith(text)]
+
     def do_print_motor_info(self, line : str):
         """ Print motor info """
         for i in range(self._selqie.NUM_MOTORS):
