@@ -22,6 +22,10 @@ class LEDNode(Node):
         self.declare_parameter('spi_dev', 0)
         self.declare_parameter('spi_hz', 2_400_000)
         self.declare_parameter('pixel_order', 'GRB')
+        # Color to show immediately on startup, before any /led_colors message
+        # arrives, so the strip gives visible confirmation the node is alive
+        # and the SPI wiring is working. (0, 0, 0) disables this behavior.
+        self.declare_parameter('startup_color', [0, 255, 0])
 
         n = int(self.get_parameter('num_leds').value)
         br = float(self.get_parameter('brightness').value)
@@ -29,6 +33,9 @@ class LEDNode(Node):
         dev = int(self.get_parameter('spi_dev').value)
         hz = int(self.get_parameter('spi_hz').value)
         po = str(self.get_parameter('pixel_order').value)
+        startup_r, startup_g, startup_b = [
+            int(c) for c in self.get_parameter('startup_color').value
+        ]
 
         self.dev = WS2812B_SPI(
             n_leds=n,
@@ -39,14 +46,27 @@ class LEDNode(Node):
             pixel_order=po,
         )
 
+        self.dev.fill(startup_r, startup_g, startup_b)
+        self.dev.show()
+
         self.sub = self.create_subscription(
             UInt32MultiArray, 'led_colors', self.cb_colors, 10
         )
 
         self.get_logger().info(
             f'WS2812B SPI node: n={n}, /dev/spidev{bus}.{dev} @ {hz} Hz, '
-            f'brightness={br}, pixel_order={po}'
+            f'brightness={br}, pixel_order={po}, '
+            f'startup_color=({startup_r},{startup_g},{startup_b})'
         )
+
+    def destroy_node(self):
+        try:
+            self.dev.fill(0, 0, 0)
+            self.dev.show()
+        except Exception:
+            pass
+        self.dev.close()
+        super().destroy_node()
 
     def cb_colors(self, msg: UInt32MultiArray):
         n = min(len(msg.data), self.dev.n)

@@ -58,6 +58,7 @@ All sensors are started together by `selqie_bringup/launch/sensing.launch.py`.
 | `spi_dev` | `0` | SPI device number |
 | `spi_hz` | `2400000` | SPI clock frequency (2.4 MHz for WS2812B timing) |
 | `pixel_order` | `GRB` | Color byte order (WS2812B uses GRB) |
+| `startup_color` | `[0, 255, 0]` | RGB color shown immediately on node startup (before any `led_colors` message), as visual confirmation that the node and SPI wiring are working. Set to `[0, 0, 0]` to disable. |
 
 ### Subscribed Topic
 
