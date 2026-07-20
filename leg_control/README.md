@@ -45,10 +45,13 @@ Each leg is a symmetric 5-bar planar linkage. The `fivebar2d_node` (C++) runs on
 
 ### Topics per Leg
 
+Note: leg topics have **no underscore** between `leg` and the leg name (e.g. `legFL/command`), unlike the motor topics.
+
 | Topic | Type | Direction |
 |-------|------|-----------|
-| `/leg_{name}/command` | `LegCommand` | In — Cartesian setpoint from stride gen |
-| `/leg_{name}/estimate` | `LegEstimate` | Out — Cartesian feedback |
+| `leg{name}/command` | `LegCommand` | In — Cartesian setpoint from stride gen (e.g. `legFL/command`) |
+| `leg{name}/estimate` | `LegEstimate` | Out — Cartesian feedback |
+| `leg{name}/trajectory` | `LegTrajectory` | In — feed-forward trajectory waypoints |
 | `/motor{N}/command` | `MotorCommand` | Out — joint motor commands |
 | `/motor{N}/estimate` | `MotorEstimate` | In — joint motor feedback |
 
@@ -111,7 +114,7 @@ The foot position is expressed in the **leg frame** with origin at the hip pivot
 +Z  → upward
 ```
 
-Typical stance foot position: `x=0.0, y=0.0, z=-0.15` (15 cm below hip, directly below).
+Default stance foot position (from `selqie.py`'s `DEFAULT_LEG_POSITION`, used by the terminal's `default` command, and matched by `stand_stride_node`'s `standing_height`): `x=0.0, y=0.0, z=-0.18914` (≈18.9 cm below hip, directly below).
 
 ---
 

@@ -102,7 +102,7 @@ sudo usermod -a -G spi $USER
 
 ## Leak Sensor
 
-**Hardware:** Digital leak detection board connected to **Pin 15 (SOC_GPIO27)**.
+**Hardware:** Digital leak detection board connected to **Pin 35 (BOARD numbering)**.
 
 **Driver:** `leak_sensor.launch.py` starts a `jetson_drivers/gpio_node` configured as an input on pin 35, polling at 10 Hz and publishing the raw pin state as `Float32` on `leak/gpio_in`. `leak_sensor/leak_sensor_node.py` subscribes to `leak/gpio_in`, converts it to a boolean per `active_high`, and republishes it on `leak/detected`. Logs a throttled warning every second while a leak is active.
 
@@ -128,13 +128,15 @@ sudo usermod -a -G spi $USER
 
 ### Emergency Response
 
-`water_shutdown.py` (repo root) subscribes to `leak/detected` and sends `"exit"` to all motor special command topics if triggered. This gracefully disables all motors and shuts down actuators in the event of flooding.
+`water_shutdown.py` (repo root) is a **standalone script, independent of ROS and of this node.** It does not subscribe to `leak/detected` or send anything to the motor special-command topics. It polls three raw GPIO pins directly with `Jetson.GPIO` (pins 35, 22, and 38 — a holdover from the predecessor robot's 3-sensor layout) and runs `sudo shutdown -h now` on the whole Orin if any of them reads HIGH, logging to `/var/log/water_shutdown.log`. It is **not** installed as a running service by `tools/install.sh`; it only runs if someone has manually set it up as a `systemd` service per the instructions in its own file header.
+
+> ⚠️ On this platform, GPIO pin 38 is wired to the reed switch (see below), not a leak sensor, and pin 22 has no sensor documented anywhere else in this repository. If `water_shutdown.py` is running as a service, it will currently misinterpret reed-switch activity on pin 38 as a leak. This script should be reconciled with the current leak-sensor/reed-switch pin assignment (35 = leak, 38 = reed switch) before being relied on for automatic leak protection — see `docs/SELQIE_LITE_2_SOP.md`, Appendix B.
 
 ---
 
 ## Reed Switch
 
-**Hardware:** Magnetic reed switch connected to **Pin 16 (SOC_GPIO08)**.
+**Hardware:** Magnetic reed switch connected to **Pin 38 (BOARD numbering)**.
 
 Use cases: detecting hull panel closure (magnet on the lid), triggering autonomous behavior when the robot is deployed.
 
@@ -172,25 +174,24 @@ Use cases: detecting hull panel closure (magnet on the lid), triggering autonomo
 
 | Topic | Type | Description |
 |-------|------|-------------|
-| `/battery/voltage` | `Float32` | Pack voltage in volts |
+| `/tinybms/pack_voltage` | `Float32` | Pack voltage in volts (there is no separate `/battery/voltage` topic) |
 
 ---
 
 ## Jetson AGX Orin Pin Assignments
 
-| Pin | Signal | Use |
-|-----|--------|-----|
-| 35 | GPIO | Leak sensor input |
-| 38 | GPIO | Reed switch input |
-| 18 | PWM5 | Camera / lights PWM |
-| 19 | SPI1_MOSI | WS2812B data signal |
-| 21 | SPI1_MISO | (not connected) |
-| 23 | SPI1_CLK | (not connected) |
-| 24 | SPI1_CS0 | (not connected) |
-| 29 | CAN0_DIN | Motor CAN bus (FL, FR) |
-| 31 | CAN0_DOUT | Motor CAN bus (FL, FR) |
-| 33 | CAN1_DIN | Motor CAN bus (RL, RR) |
-| 37 | CAN1_DOUT | Motor CAN bus (RL, RR) |
+Physical/BOARD numbering, the numbering `Jetson.GPIO`'s `GPIO.setmode(GPIO.BOARD)` uses. See the [main README](../README.md#jetson-agx-orin-40-pin-header) for the complete 40-pin chart with default (silkscreen) signal names; this table only lists the pins sensing hardware uses.
+
+| Pin | Use |
+|-----|-----|
+| 35 | Leak sensor input (default silkscreen label `I2S_FS`, repurposed as GPIO) |
+| 38 | Reed switch input (default silkscreen label `I2S_SDIN`, repurposed as GPIO) — hull-door detection, **not** a leak sensor |
+| 13 *or* 32 | Hull-latch servo PWM — `servo_node`'s own default/comment say pin 32, but `sensing_bringup/launch/servo.launch.py` overrides it to pin 13, so **13 is what actually runs**. See `docs/SELQIE_LITE_2_SOP.md`, Appendix B. |
+| 18 | Camera / underwater-lights PWM (reconfigured as PWM5) |
+| 19 | WS2812B data signal (SPI1_MOSI) |
+| 21, 23, 24 | SPI1 MISO/CLK/CS0 (not connected) |
+| 29, 31 | Motor CAN bus `can0` (FL, FR) — not a sensing pin, listed for reference |
+| 33, 37 | Motor CAN bus `can1` (RL, RR) — not a sensing pin, listed for reference |
 
 These functions are configured automatically by `tools/install.sh` using:
 ```bash

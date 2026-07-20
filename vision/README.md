@@ -2,7 +2,7 @@
 
 1. Turn on the robot and place it in the pool
 2. Start the onboard computing
-3. On the laptop (Not in SSH), run `ros2 launch vision_bringup camera_calibration.launch.py`
+3. On the laptop (Not in SSH), run `ros2 launch vision_bringup stereo_calibration.launch.py` (this file was previously named `camera_calibration.launch.py`; some older instructions may still refer to that name)
 4. A GUI should appear on screen showing the two cameras
 5. Insert the checkerboard in the water infront of the cameras
 6. Move the checkerboard around and at different angles until all bars in the GUI are green
