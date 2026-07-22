@@ -10,9 +10,8 @@ def launch_setup(context, *args, **kwargs):
     motor_type = LaunchConfiguration('motor_type').perform(context)
     control_hz = LaunchConfiguration('control_hz').perform(context)
     auto_start = LaunchConfiguration('auto_start').perform(context)
-    position_kp = LaunchConfiguration('position_kp').perform(context)
-    position_kd = LaunchConfiguration('position_kd').perform(context)
-    velocity_kd = LaunchConfiguration('velocity_kd').perform(context)
+    pole_pairs = LaunchConfiguration('pole_pairs').perform(context)
+    gear_ratio = LaunchConfiguration('gear_ratio').perform(context)
     cmd_timeout = LaunchConfiguration('cmd_timeout').perform(context)
     reverse_polarity = LaunchConfiguration('reverse_polarity').perform(context)
 
@@ -31,9 +30,8 @@ def launch_setup(context, *args, **kwargs):
                 'control_hz': float(control_hz),
                 'joint_name': joint_name,
                 'auto_start': auto_start.lower() in ('true', '1', 'yes'),
-                'position_kp': float(position_kp),
-                'position_kd': float(position_kd),
-                'velocity_kd': float(velocity_kd),
+                'pole_pairs': int(pole_pairs),
+                'gear_ratio': float(gear_ratio),
                 'cmd_timeout': float(cmd_timeout),
                 'reverse_polarity': reverse_polarity.lower() in ('true', '1', 'yes'),
             }],
@@ -56,27 +54,22 @@ def generate_launch_description():
             'control_hz', default_value='100.0', description='Control loop rate in Hz.'
         ),
         DeclareLaunchArgument(
-            'auto_start', default_value='false', description='Start motor automatically.'
+            'auto_start', default_value='false', description='Enable motor automatically.'
         ),
         DeclareLaunchArgument(
-            'position_kp',
-            default_value='1.1',
-            description='MIT Kp used for /motorN/command position control (AK40-10: T_MAX=5Nm, keep low).',
+            'pole_pairs',
+            default_value='0',
+            description='Rotor pole pairs for ERPM (velocity) scaling. 0 = per-motor default.',
         ),
         DeclareLaunchArgument(
-            'position_kd',
-            default_value='0.12',
-            description='MIT Kd used for /motorN/command position control.',
-        ),
-        DeclareLaunchArgument(
-            'velocity_kd',
-            default_value='0.5',
-            description='MIT Kd used for /motorN/command velocity control.',
+            'gear_ratio',
+            default_value='0.0',
+            description='Gearbox reduction for ERPM/torque scaling. 0 = per-motor default.',
         ),
         DeclareLaunchArgument(
             'cmd_timeout',
             default_value='0.5',
-            description='Seconds without a command before motor is zeroed (0 = disabled).',
+            description='Seconds without a command before motor is released (0 = disabled).',
         ),
         DeclareLaunchArgument(
             'reverse_polarity',
