@@ -47,15 +47,7 @@ class TinyBmsUart(Node):
         timeout_s = float(self.get_parameter("timeout_s").get_parameter_value().double_value)
 
         # Open serial
-        self.ser = serial.Serial(
-            port=port,
-            baudrate=baud,
-            bytesize=serial.EIGHTBITS,
-            parity=serial.PARITY_NONE,
-            stopbits=serial.STOPBITS_ONE,
-            timeout=timeout_s,
-            write_timeout=timeout_s,
-        )
+        self.ser = self._open_serial(port, baud, timeout_s)
 
         self.pub = self.create_publisher(Float32, "/tinybms/pack_voltage", 10)
 
@@ -64,6 +56,42 @@ class TinyBmsUart(Node):
         self.timer = self.create_timer(period, self.poll_once)
 
         self.get_logger().info(f"TinyBMS UART voltage node on {port} @ {baud} baud")
+
+    def _open_serial(self, port: str, baud: int, timeout_s: float) -> serial.Serial:
+        """
+        Open the serial port, turning the common "Permission denied" failure
+        into an actionable message instead of a bare traceback.
+
+        Serial devices (/dev/ttyUSB*, /dev/ttyTHS*) are owned by group
+        'dialout' with mode 0660, so a user who is not in that group cannot
+        open them.
+        """
+        try:
+            return serial.Serial(
+                port=port,
+                baudrate=baud,
+                bytesize=serial.EIGHTBITS,
+                parity=serial.PARITY_NONE,
+                stopbits=serial.STOPBITS_ONE,
+                timeout=timeout_s,
+                write_timeout=timeout_s,
+            )
+        except serial.SerialException as e:
+            # PermissionError (errno 13) surfaces here as a SerialException.
+            if isinstance(e.__cause__, PermissionError) or "Permission denied" in str(e):
+                self.get_logger().error(
+                    f"Permission denied opening {port}. The serial device is owned "
+                    f"by group 'dialout'; add your user to it and re-log in:\n"
+                    f"    sudo usermod -a -G dialout $USER\n"
+                    f"then log out and back in (or reboot). Verify with 'groups'. "
+                    f"This is set up automatically by tools/install.sh."
+                )
+            else:
+                self.get_logger().error(
+                    f"Could not open serial port {port}: {e}. "
+                    f"Check that the device is connected and the 'port' parameter is correct."
+                )
+            raise
 
     def build_voltage_request(self) -> bytes:
         # Request: 0xAA 0x14 CRC_LSB CRC_MSB :contentReference[oaicite:9]{index=9}

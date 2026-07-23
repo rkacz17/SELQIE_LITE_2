@@ -84,7 +84,19 @@ source /opt/ros/humble/setup.bash
 source ~/selqie_ws/install/setup.bash
 ```
 
-#### 7. Jetson-specific setup
+#### 7. Serial (UART) permissions
+
+Runs on both Jetson and `--devel` machines. The TinyBMS battery monitor and
+other serial devices (`/dev/ttyUSB*`, `/dev/ttyTHS*`) are owned by group
+`dialout` with mode `0660`, so the user must be in that group to open them:
+```bash
+sudo usermod -a -G dialout $USER
+```
+Takes effect after the next login (or reboot). Without it,
+`ros2 launch battery tinybms_voltage_uart.launch.py` fails with
+`PermissionError: [Errno 13] Permission denied: '/dev/ttyUSB0'`.
+
+#### 8. Jetson-specific setup
 
 Skipped with `--devel`. On Jetson:
 
@@ -189,6 +201,6 @@ After running `install.sh` and **rebooting**:
 - [ ] `ls /dev/spidev0.0` — SPI device exists
 - [ ] `ip link show can0` — CAN0 is UP
 - [ ] `ip link show can1` — CAN1 is UP
-- [ ] `groups` includes `gpio`, `spi`, `dialout`
+- [ ] `groups` includes `gpio`, `spi`, `dialout` (`dialout` required for the TinyBMS serial port)
 - [ ] `source ~/.bashrc` — ROS2 and workspace are sourced
 - [ ] `ros2 launch selqie_bringup selqie_hw.launch.py` — launches without errors

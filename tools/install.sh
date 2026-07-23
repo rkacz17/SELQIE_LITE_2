@@ -119,6 +119,12 @@ if ! grep -Fxq "$PROJECT_SETUP" ~/.bashrc; then
     echo "$PROJECT_SETUP" >> ~/.bashrc
 fi
 
+# Setup serial (UART) device permissions
+# The TinyBMS battery monitor and other serial devices (/dev/ttyUSB*, /dev/ttyTHS*)
+# are owned by group 'dialout' with mode 0660. Add the user to that group so ROS2
+# nodes can open the port without root. Requires a re-login (or reboot) to take effect.
+sudo usermod -a -G dialout ${USER}
+
 # Jetson AGX Orin Setup
 if [ "$DEVEL_FLAG" = false ]; then
 
