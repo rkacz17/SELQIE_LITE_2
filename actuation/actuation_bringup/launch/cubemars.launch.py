@@ -57,7 +57,10 @@ def generate_launch_description():
             'motor_type', default_value='AK40-10', description='Cubemars motor type.'
         ),
         DeclareLaunchArgument(
-            'control_hz', default_value='100.0', description='Control loop rate in Hz.'
+            'control_hz',
+            default_value='250.0',
+            description='Control loop / setpoint stream rate in Hz. Higher = finer, smoother '
+                        'position streaming for plain SET_POS.',
         ),
         DeclareLaunchArgument(
             'auto_start', default_value='false', description='Enable motor automatically.'
