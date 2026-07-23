@@ -9,6 +9,7 @@ the full command -> servo-frame path (units and packet selection) that the leg
 trajectory stack depends on.
 """
 
+import math
 import struct
 import sys
 import types
@@ -194,7 +195,7 @@ def _last_frame(node):
 
 
 def test_position_command_emits_degrees(make_node):
-    node, mn = make_node(motor_type="AK40-10")
+    node, mn = make_node(motor_type="AK40-10", position_mode="pos")
     cmd = mn.MotorCommand()
     cmd.control_mode = mn.MotorCommand.CONTROL_MODE_POSITION
     cmd.pos_setpoint = 3.141592653589793 / 2  # 90 degrees
@@ -208,6 +209,71 @@ def test_position_command_emits_degrees(make_node):
     assert nid == 1
     deg = struct.unpack(">i", frame.data)[0] / sp.POS_SCALE
     assert deg == pytest.approx(90.0, abs=1e-3)
+
+
+def test_position_mode_defaults_to_pos_spd(make_node):
+    # No position_mode override -> node default should be pos_spd (SET_POS_SPD).
+    node, mn = make_node(motor_type="AK40-10")
+    assert node.position_mode == "pos_spd"
+    cmd = mn.MotorCommand()
+    cmd.control_mode = mn.MotorCommand.CONTROL_MODE_POSITION
+    cmd.pos_setpoint = 3.141592653589793 / 2
+    node.on_motor_command(cmd)
+    node._tick_control()
+
+    frame = _last_frame(node)
+    pid, _ = sp.parse_status_id(frame.arbitration_id)
+    assert pid == sp.CAN_PACKET_SET_POS_SPD
+    assert len(frame.data) == 8
+    deg = struct.unpack(">i", frame.data[0:4])[0] / sp.POS_SCALE
+    assert deg == pytest.approx(90.0, abs=1e-3)
+    # First move of a run has no history -> zero speed feed-forward.
+    assert struct.unpack(">h", frame.data[4:6])[0] == 0
+
+
+def test_pos_spd_velocity_feedforward(make_node):
+    # gear=10, pole_pairs=14, control_hz=100
+    node, mn = make_node(motor_type="AK40-10", control_hz=100.0)
+    cmd = mn.MotorCommand()
+    cmd.control_mode = mn.MotorCommand.CONTROL_MODE_POSITION
+
+    cmd.pos_setpoint = 0.10
+    node.on_motor_command(cmd)
+    node._tick_control()  # first frame: speed 0, seeds feed-forward
+
+    cmd.pos_setpoint = 0.15
+    node.on_motor_command(cmd)
+    node._tick_control()  # second frame: speed from (0.15-0.10)*100 = 5 rad/s
+
+    frame = _last_frame(node)
+    pid, _ = sp.parse_status_id(frame.arbitration_id)
+    assert pid == sp.CAN_PACKET_SET_POS_SPD
+    deg = struct.unpack(">i", frame.data[0:4])[0] / sp.POS_SCALE
+    assert deg == pytest.approx(math.degrees(0.15), abs=1e-3)
+    speed_on_wire = struct.unpack(">h", frame.data[4:6])[0]
+    expected_erpm = sp.rads_to_erpm(5.0, 10, 14)  # 6683.6 ERPM
+    assert speed_on_wire == pytest.approx(round(expected_erpm / 10.0), abs=1)
+    accel_on_wire = struct.unpack(">h", frame.data[6:8])[0]
+    assert accel_on_wire == pytest.approx(round(node.pos_spd_accel / 10.0), abs=1)
+
+
+def test_pos_spd_speed_never_exceeds_cap(make_node):
+    node, mn = make_node(motor_type="AK40-10", control_hz=100.0)
+    cmd = mn.MotorCommand()
+    cmd.control_mode = mn.MotorCommand.CONTROL_MODE_POSITION
+    # Huge jump between ticks -> feed-forward would exceed V_MAX; must be capped.
+    cmd.pos_setpoint = 0.0
+    node.on_motor_command(cmd)
+    node._tick_control()
+    cmd.pos_setpoint = 50.0  # absurd single-step
+    node.on_motor_command(cmd)
+    node._tick_control()
+
+    frame = _last_frame(node)
+    speed_erpm = struct.unpack(">h", frame.data[4:6])[0] * sp.POS_SPD_SPEED_SCALE
+    # Capped at V_MAX (allow one int16 quantization step of 10 ERPM), not the
+    # ~6.7M ERPM the raw 50 rad/tick feed-forward would demand.
+    assert speed_erpm <= node._speed_cap_erpm + sp.POS_SPD_SPEED_SCALE
 
 
 def test_velocity_command_emits_erpm(make_node):
@@ -257,7 +323,7 @@ def test_torque_command_clamped_to_motor_limit(make_node):
 
 
 def test_reverse_polarity_negates_position(make_node):
-    node, mn = make_node(motor_type="AK40-10", reverse_polarity=True)
+    node, mn = make_node(motor_type="AK40-10", reverse_polarity=True, position_mode="pos")
     cmd = mn.MotorCommand()
     cmd.control_mode = mn.MotorCommand.CONTROL_MODE_POSITION
     cmd.pos_setpoint = 3.141592653589793 / 2
@@ -283,7 +349,7 @@ def test_not_started_releases_current(make_node):
 
 
 def test_start_then_move(make_node):
-    node, mn = make_node(motor_type="AK40-10", auto_start=False)
+    node, mn = make_node(motor_type="AK40-10", auto_start=False, position_mode="pos")
     special = mn.String()
     special.data = "start"
     node.on_special(special)

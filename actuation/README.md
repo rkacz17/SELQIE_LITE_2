@@ -41,13 +41,22 @@ All frames are **CAN 2.0 extended (29-bit)**: `CAN ID = (packet_id << 8) | node_
 
 | MotorCommand mode | Servo packet | Command unit | Conversion from ROS units |
 |-------------------|--------------|--------------|---------------------------|
-| `POSITION` (3) | `SET_POS` (4) | output-shaft degrees × 10000 | `deg = rad × 180/π` |
+| `POSITION` (3) | `SET_POS_SPD` (6) † | output-shaft degrees × 10000 + speed/accel | `deg = rad × 180/π` |
 | `VELOCITY` (2) | `SET_RPM` (3) | rotor ERPM | `ERPM = rad/s × (60/2π) × gear × pole_pairs` |
 | `TORQUE` (1) | `SET_CURRENT` (1) | phase current × 1000 (mA) | `I = τ / (Kt × gear)` |
 
 The all-stride trajectory path uses **POSITION** mode, whose conversion is a pure rad↔deg scaling
 (no gear factor — servo position is referenced to the output shaft). Velocity and torque modes
 additionally need the gear ratio, pole pairs, and torque constant listed below.
+
+† **Position streaming (`pos_spd` vs `pos`).** By default POSITION mode streams **position-velocity**
+frames (`SET_POS_SPD`, §5.1.7): each setpoint carries a velocity feed-forward derived from the
+change in commanded position over one control period, plus a bounded acceleration. This makes the
+motor move *at the trajectory's speed* rather than approaching every target at the motor's maximum
+speed. Plain `SET_POS` (`position_mode: pos`) slams to each target at max speed with the driver's
+internal loop — fine for slow, narrow gaits (walk) but it rings on wide/fast gaits (swim) because
+there is no velocity/acceleration shaping (the old MIT Kp used to absorb it). The speed feed-forward
+is clamped to the motor's `V_MAX`; the acceleration limit is `pos_spd_accel` (ERPM/s).
 
 > **Notation trap:** servo **position** is output-shaft referenced, but servo **speed** is
 > *rotor-electrical* (ERPM). That asymmetry is why velocity conversion carries a `gear × pole_pairs`
@@ -146,6 +155,8 @@ float32 torq_estimate  # Nm
 | `control_hz` | `100.0` | Rate at which command frames are sent |
 | `pole_pairs` | `0` | Rotor pole pairs for ERPM scaling (`0` = per-motor table default) |
 | `gear_ratio` | `0.0` | Gear reduction for ERPM/torque scaling (`0` = per-motor table default) |
+| `position_mode` | `pos_spd` | POSITION streaming: `pos_spd` (velocity feed-forward, smooth) or `pos` (plain SET_POS) |
+| `pos_spd_accel` | `200000.0` | Acceleration limit (ERPM/s) for `pos_spd` streaming |
 | `reverse_polarity` | `false` | Negate position/velocity/torque |
 | `cmd_timeout` | `0.5` | Seconds before a stale command releases the motor (0 = disabled) |
 | `auto_start` | `false` | Enable motor on node startup |
