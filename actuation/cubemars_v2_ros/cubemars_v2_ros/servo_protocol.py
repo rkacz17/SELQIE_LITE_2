@@ -63,15 +63,15 @@ DUTY_SCALE = 100000.0             # duty  -> int32, buffer = duty  * 100000
 CURRENT_SCALE = 1000.0            # A     -> int32, buffer = amps  * 1000  (mA)
 RPM_SCALE = 1.0                   # ERPM  -> int32, buffer = erpm  * 1
 POS_SCALE = 10000.0               # deg   -> int32, buffer = deg   * 10000
-POS_SPD_SPEED_SCALE = 10.0        # ERPM  -> int16, buffer = erpm  / 10
-POS_SPD_ACCEL_SCALE = 10.0        # ERPM/s-> int16, buffer = accel / 10
+POS_SPD_SPEED_SCALE = 10.0        # ERPM      -> int16, buffer = erpm  / 10 (signed)
+POS_SPD_ACCEL_SCALE = 10.0        # ERPM/s^2  -> int16, buffer = accel / 10 (unsigned)
 
 # Encoding limits (int32 command fields) from the manual.
 CURRENT_MAX_A = 60.0              # ±60 A  -> ±60000
 RPM_MAX_ERPM = 100000.0          # ±100000 ERPM
 POS_MAX_DEG = 36000.0            # ±36000° (±100 turns of the output shaft)
-POS_SPD_SPEED_MAX_ERPM = 327680.0  # int16 * 10
-POS_SPD_ACCEL_MAX = 327670.0       # int16 * 10, 1 unit == 10 ERPM/s
+POS_SPD_SPEED_MAX_ERPM = 327680.0  # signed int16 * 10 (-327680..327670)
+POS_SPD_ACCEL_MAX = 327670.0       # unsigned int16 * 10 (0..327670); 1 unit == 10 ERPM/s^2
 
 # ===================== FEEDBACK SCALING (manual §5.2.1) =====================
 
@@ -223,12 +223,15 @@ def pack_origin(node_id, mode=0):
 def pack_pos_spd(node_id, pos_deg, speed_erpm, accel):
     """Position-velocity mode frame.
 
-    ``pos_deg`` output-shaft degrees, ``speed_erpm`` electrical RPM,
-    ``accel`` in ERPM/s (encoded as ``accel / 10`` per the manual).
+    Per the manual's transmit-data table:
+      * position: int32, ``pos_deg * 10000`` (deg, output shaft), signed.
+      * speed:    int16, ``speed_erpm / 10`` (ERPM), signed (-327680..327670).
+      * accel:    int16, ``accel / 10``, non-negative (0..327670); the manual
+        gives its unit as electrical RPM/s^2.
     """
     pos_deg = clamp(pos_deg, -POS_MAX_DEG, POS_MAX_DEG)
     speed_erpm = clamp(speed_erpm, -POS_SPD_SPEED_MAX_ERPM, POS_SPD_SPEED_MAX_ERPM)
-    accel = clamp(accel, -POS_SPD_ACCEL_MAX, POS_SPD_ACCEL_MAX)
+    accel = clamp(accel, 0.0, POS_SPD_ACCEL_MAX)  # accel field is unsigned (0..32767)
     data = (
         _pack_int32_be(pos_deg * POS_SCALE)
         + _pack_int16_be(speed_erpm / POS_SPD_SPEED_SCALE)

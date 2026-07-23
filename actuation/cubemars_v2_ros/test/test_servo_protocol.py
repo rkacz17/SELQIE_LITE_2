@@ -117,13 +117,33 @@ def test_pack_origin():
 
 
 def test_pack_pos_spd_layout():
-    # 4-byte pos (deg*10000) + 2-byte speed (erpm/10) + 2-byte accel (a/10)
+    # 4-byte pos (deg*10000) + 2-byte speed (erpm/10) + 2-byte accel (a/10),
+    # matching the manual's Position-Velocity transmit-data table.
     can_id, data = sp.pack_pos_spd(1, 10.0, 5000.0, 40000.0)
     assert can_id == sp.servo_can_id(sp.CAN_PACKET_SET_POS_SPD, 1)
     assert len(data) == 8
-    assert struct.unpack(">i", data[0:4])[0] == int(10.0 * 10000.0)
-    assert struct.unpack(">h", data[4:6])[0] == int(5000.0 / 10.0)
-    assert struct.unpack(">h", data[6:8])[0] == int(40000.0 / 10.0)
+    assert struct.unpack(">i", data[0:4])[0] == int(10.0 * 10000.0)   # position 25..0 bits
+    assert struct.unpack(">h", data[4:6])[0] == int(5000.0 / 10.0)    # speed high/low
+    assert struct.unpack(">h", data[6:8])[0] == int(40000.0 / 10.0)   # accel high/low
+
+
+def test_pack_pos_spd_signed_speed():
+    # Speed is a signed int16 (-327680..327670 ERPM).
+    _, data = sp.pack_pos_spd(1, 0.0, -12345.0, 10000.0)
+    assert struct.unpack(">h", data[4:6])[0] == int(-12345.0 / 10.0)
+
+
+def test_pack_pos_spd_accel_is_non_negative():
+    # The accel field is unsigned (0..32767); a negative accel must clamp to 0,
+    # never encode as a negative int16 the firmware would misread.
+    _, data = sp.pack_pos_spd(1, 0.0, 1000.0, -5000.0)
+    assert struct.unpack(">h", data[6:8])[0] == 0
+
+
+def test_pack_pos_spd_accel_clamped_to_max():
+    _, data = sp.pack_pos_spd(1, 0.0, 1000.0, 1e9)
+    assert struct.unpack(">h", data[6:8])[0] == int(sp.POS_SPD_ACCEL_MAX / 10.0)
+    assert struct.unpack(">h", data[6:8])[0] == 32767  # int16 max
 
 
 # ------------------------------ conversions -----------------------------
