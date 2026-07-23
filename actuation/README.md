@@ -41,7 +41,7 @@ All frames are **CAN 2.0 extended (29-bit)**: `CAN ID = (packet_id << 8) | node_
 
 | MotorCommand mode | Servo packet | Command unit | Conversion from ROS units |
 |-------------------|--------------|--------------|---------------------------|
-| `POSITION` (3) | `SET_POS` (4) † | output-shaft degrees × 10000 | `deg = rad × 180/π` |
+| `POSITION` (3) | `SET_POS` (4) / `SET_POS_SPD` (6) † | output-shaft degrees × 10000 | `deg = rad × 180/π` |
 | `VELOCITY` (2) | `SET_RPM` (3) | rotor ERPM | `ERPM = rad/s × (60/2π) × gear × pole_pairs` |
 | `TORQUE` (1) | `SET_CURRENT` (1) | phase current × 1000 (mA) | `I = τ / (Kt × gear)` |
 
@@ -49,23 +49,23 @@ The all-stride trajectory path uses **POSITION** mode, whose conversion is a pur
 (no gear factor — servo position is referenced to the output shaft). Velocity and torque modes
 additionally need the gear ratio, pole pairs, and torque constant listed below.
 
-† **Position streaming (`pos` vs `pos_spd`).** POSITION mode has two implementations, chosen with
-the `position_mode` parameter:
-
-* **`pos` (default) — plain `SET_POS`.** The driver drives to each streamed setpoint using the
-  motor's **full physical acceleration**, so it tracks position accurately at *every* gait
-  frequency. This is the right choice for "trajectories run correctly." Because it is not
-  acceleration-shaped, a *coarse* setpoint stream would move as a slam-and-wait staircase and can
-  ring; the fix is to stream finely — run the node at a high `control_hz` (default **250 Hz**) so
-  the position steps are small and the motion is smooth.
+† **Position streaming (`pos_spd` vs `pos`).** POSITION mode has two implementations, selected at
+runtime with the `pos`/`pos_spd` special commands (startup default from the `position_mode`
+parameter). The SELQIE UI picks between them by context: **`pos_spd` for slow gaits (< 1 Hz) and the
+stand/ready hold, `pos` for gaits ≥ 1 Hz.**
 
 * **`pos_spd` — `SET_POS_SPD` (§5.1.7)** with a velocity feed-forward derived from the change in
-  commanded position over one control period, plus a bounded acceleration. It is smooth at low
-  frequency, **but** the `SET_POS_SPD` acceleration field is protocol-capped at `pos_spd_accel`
-  ≈ 327670 ERPM/s (~245 rad/s² at the AK40-10 output), and gait acceleration demand grows with
-  frequency *squared*. Above ~1–1.5× the base frequency the demand exceeds that cap, the motor can
-  no longer keep up, and **positional accuracy is lost**. Use `pos_spd` only for slow gaits where
-  smoothness matters more than high-frequency fidelity.
+  commanded position over one control period, plus a bounded acceleration. Smooth — the right choice
+  for the gentle stand/ready move and slow gaits. **But** its acceleration field is protocol-capped
+  at `pos_spd_accel` ≈ 327670 ERPM/s (~245 rad/s² at the AK40-10 output), and gait acceleration
+  demand grows with frequency *squared*; above ~1–1.5× the demand exceeds that cap, the motor cannot
+  keep up, and **positional accuracy is lost**. So it is used only below 1 Hz.
+
+* **`pos` — plain `SET_POS`.** The driver drives to each streamed setpoint using the motor's **full
+  physical acceleration**, so it tracks position accurately at *every* gait frequency — used for
+  gaits ≥ 1 Hz. It is not acceleration-shaped, so a *coarse* setpoint stream would move as a
+  slam-and-wait staircase and can ring; the node streams finely at a high `control_hz`
+  (default **250 Hz**) so the position steps are small and the motion stays smooth.
 
   In `pos_spd`, the speed feed-forward is clamped to the motor's `V_MAX`, and a held/static setpoint
   (e.g. the `stand` pose) produces zero feed-forward — so a minimum approach speed
@@ -174,7 +174,7 @@ float32 torq_estimate  # Nm
 | `control_hz` | `250.0` | Setpoint stream / command rate. Higher = finer, smoother position streaming |
 | `pole_pairs` | `0` | Rotor pole pairs for ERPM scaling (`0` = per-motor table default) |
 | `gear_ratio` | `0.0` | Gear reduction for ERPM/torque scaling (`0` = per-motor table default) |
-| `position_mode` | `pos` | POSITION streaming: `pos` (plain SET_POS, accurate at all freq) or `pos_spd` (feed-forward, smooth but accel-capped) |
+| `position_mode` | `pos_spd` | Startup POSITION submode: `pos_spd` (feed-forward, smooth) or `pos` (plain SET_POS, accurate at all freq). Switchable at runtime via the `pos`/`pos_spd` special commands |
 | `pos_spd_accel` | `327670.0` | Acceleration limit (ERPM/s) for `pos_spd` streaming (protocol max) |
 | `pos_spd_min_speed` | `2.0` | Minimum approach speed (rad/s) for `pos_spd`; lets held poses (stand) reach their target |
 | `reverse_polarity` | `false` | Negate position/velocity/torque |
@@ -244,6 +244,12 @@ Send a string to `/{joint}/special_cmd`:
 | `exit` | Release the motor (zero current) and stop driving it |
 | `zero` | Set the current position as the (temporary) origin |
 | `clear` | Neutral hold — release torque until a new command arrives |
+| `pos` | Switch POSITION streaming to plain `SET_POS` (accurate; used for gaits ≥ 1 Hz) |
+| `pos_spd` | Switch POSITION streaming to `SET_POS_SPD` (smooth; used for slow gaits and stand/ready) |
+
+The SELQIE UI drives `pos`/`pos_spd` automatically: `run_trajectory` selects `pos_spd` for segments
+below 1 Hz and `pos` at or above 1 Hz, and returns to `pos_spd` when the gait completes; `ready` and
+`stand` select `pos_spd` for the held pose.
 
 Example:
 ```bash

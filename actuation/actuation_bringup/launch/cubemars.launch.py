@@ -78,7 +78,8 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'position_mode',
             default_value='pos_spd',
-            description="POSITION streaming: 'pos_spd' (velocity feed-forward) or 'pos' (plain).",
+            description="Startup POSITION streaming: 'pos_spd' (feed-forward, smooth) or 'pos' "
+                        "(plain). Switchable at runtime via the pos/pos_spd special commands.",
         ),
         DeclareLaunchArgument(
             'pos_spd_accel',

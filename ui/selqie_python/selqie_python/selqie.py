@@ -287,6 +287,21 @@ class SELQIE(Node):
         """Set the motor's current Cubemars encoder position to zero."""
         self.send_motor_special_command(motor_idx, 'zero')
 
+    def set_motor_position_mode(self, motor_idx : int, mode : str):
+        """Select the motor's POSITION streaming submode ('pos' or 'pos_spd')."""
+        if mode not in ('pos', 'pos_spd'):
+            raise ValueError(f"position mode must be 'pos' or 'pos_spd', got {mode!r}")
+        self.send_motor_special_command(motor_idx, mode)
+
+    def set_all_motors_position_mode(self, mode : str):
+        """Select the POSITION streaming submode on every motor.
+
+        Use 'pos_spd' (smooth) for slow gaits (<1 Hz) and stand/ready holds, and
+        'pos' (accurate at every frequency) for faster gaits.
+        """
+        for i in range(self.NUM_MOTORS):
+            self.set_motor_position_mode(i, mode)
+
     def send_motor_command(self, motor_idx : int, position : float, velocity : float, kp : float, kd : float, torque : float):
         """Send a Cubemars MotorCommand; gains are owned by the motor launch file."""
         if motor_idx < 0 or motor_idx >= self.NUM_MOTORS:
