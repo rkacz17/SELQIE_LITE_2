@@ -79,8 +79,8 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'pos_spd_accel',
-            default_value='200000.0',
-            description='Acceleration limit (ERPM/s) for pos_spd position streaming.',
+            default_value='327670.0',
+            description='Acceleration limit (ERPM/s) for pos_spd streaming; protocol max ~327670.',
         ),
         DeclareLaunchArgument(
             'pos_spd_min_speed',

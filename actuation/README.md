@@ -64,6 +64,17 @@ approach speed (`pos_spd_min_speed`, rad/s) floors the commanded speed so held p
 move still travel to their target; it only binds when the trajectory is (near-)stationary, so it
 does not affect normal gait fidelity.
 
+**Frequency scaling and the acceleration ceiling.** When a trajectory is replayed at a higher
+frequency (`run_trajectory ... <freq>`), the position setpoints move faster, so the velocity
+feed-forward scales up with frequency automatically. However, **acceleration** demand scales with
+frequency *squared*, and the `SET_POS_SPD` acceleration field is protocol-capped at
+`pos_spd_accel` ≈ 327670 ERPM/s (~245 rad/s² at the AK40-10 output). Once a gait's acceleration
+demand exceeds that cap the motor can no longer reach the higher commanded speeds, so the movement
+speed **plateaus** even as you raise the frequency — this is a protocol limit of position-velocity
+mode, not a bug. If you need speed beyond that ceiling, set `position_mode: pos` (plain `SET_POS`),
+which uses the motor's full physical acceleration and keeps scaling — at the cost of the
+max-speed slam / ringing that `pos_spd` was added to suppress.
+
 > **Notation trap:** servo **position** is output-shaft referenced, but servo **speed** is
 > *rotor-electrical* (ERPM). That asymmetry is why velocity conversion carries a `gear × pole_pairs`
 > factor and position does not.
@@ -162,7 +173,7 @@ float32 torq_estimate  # Nm
 | `pole_pairs` | `0` | Rotor pole pairs for ERPM scaling (`0` = per-motor table default) |
 | `gear_ratio` | `0.0` | Gear reduction for ERPM/torque scaling (`0` = per-motor table default) |
 | `position_mode` | `pos_spd` | POSITION streaming: `pos_spd` (velocity feed-forward, smooth) or `pos` (plain SET_POS) |
-| `pos_spd_accel` | `200000.0` | Acceleration limit (ERPM/s) for `pos_spd` streaming |
+| `pos_spd_accel` | `327670.0` | Acceleration limit (ERPM/s) for `pos_spd` streaming (protocol max) |
 | `pos_spd_min_speed` | `2.0` | Minimum approach speed (rad/s) for `pos_spd`; lets held poses (stand) reach their target |
 | `reverse_polarity` | `false` | Negate position/velocity/torque |
 | `cmd_timeout` | `0.5` | Seconds before a stale command releases the motor (0 = disabled) |

@@ -148,9 +148,15 @@ class MotorNode(Node):
         # moves at the commanded trajectory speed instead of slamming to each
         # setpoint at max speed. "pos" is the plain SET_POS behaviour.
         self.declare_parameter("position_mode", "pos_spd")
-        # Acceleration limit (ERPM/s) for pos_spd streaming. Clamped to the
-        # protocol max (~327670 ERPM/s).
-        self.declare_parameter("pos_spd_accel", 200000.0)
+        # Acceleration limit (ERPM/s) for pos_spd streaming. Defaults to the
+        # protocol maximum so acceleration is not the bottleneck when the gait
+        # frequency is increased -- the velocity feed-forward (which scales with
+        # frequency) then governs the speed, while the speed cap still prevents
+        # the max-speed slam that caused ringing. Note: the SET_POS_SPD accel
+        # field is protocol-capped at this value (~245 rad/s^2 at the output for
+        # AK40-10), so very high gait frequencies will still saturate here; use
+        # position_mode:"pos" for uncapped (but unshaped) speed.
+        self.declare_parameter("pos_spd_accel", sp.POS_SPD_ACCEL_MAX)
         # Minimum approach speed (rad/s) for pos_spd streaming. A held/static
         # position setpoint (e.g. the "stand" pose) produces zero position change
         # between ticks, so the velocity feed-forward is zero; without a floor,
