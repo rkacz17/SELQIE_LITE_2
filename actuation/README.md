@@ -58,6 +58,12 @@ internal loop — fine for slow, narrow gaits (walk) but it rings on wide/fast g
 there is no velocity/acceleration shaping (the old MIT Kp used to absorb it). The speed feed-forward
 is clamped to the motor's `V_MAX`; the acceleration limit is `pos_spd_accel` (ERPM/s).
 
+A **held** position (a static setpoint such as the `stand` pose) produces zero change between
+ticks, so the feed-forward would be zero — and `SET_POS_SPD` with speed 0 never moves. A minimum
+approach speed (`pos_spd_min_speed`, rad/s) floors the commanded speed so held poses and the first
+move still travel to their target; it only binds when the trajectory is (near-)stationary, so it
+does not affect normal gait fidelity.
+
 > **Notation trap:** servo **position** is output-shaft referenced, but servo **speed** is
 > *rotor-electrical* (ERPM). That asymmetry is why velocity conversion carries a `gear × pole_pairs`
 > factor and position does not.
@@ -157,6 +163,7 @@ float32 torq_estimate  # Nm
 | `gear_ratio` | `0.0` | Gear reduction for ERPM/torque scaling (`0` = per-motor table default) |
 | `position_mode` | `pos_spd` | POSITION streaming: `pos_spd` (velocity feed-forward, smooth) or `pos` (plain SET_POS) |
 | `pos_spd_accel` | `200000.0` | Acceleration limit (ERPM/s) for `pos_spd` streaming |
+| `pos_spd_min_speed` | `2.0` | Minimum approach speed (rad/s) for `pos_spd`; lets held poses (stand) reach their target |
 | `reverse_polarity` | `false` | Negate position/velocity/torque |
 | `cmd_timeout` | `0.5` | Seconds before a stale command releases the motor (0 = disabled) |
 | `auto_start` | `false` | Enable motor on node startup |
