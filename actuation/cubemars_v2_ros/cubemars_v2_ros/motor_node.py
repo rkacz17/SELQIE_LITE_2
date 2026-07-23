@@ -143,11 +143,18 @@ class MotorNode(Node):
         self.declare_parameter("pole_pairs", 0)
         self.declare_parameter("gear_ratio", 0.0)
         self.declare_parameter("cmd_timeout", 0.5)  # seconds before a stale cmd is cleared
-        # POSITION-mode streaming: "pos_spd" streams position-velocity frames
-        # (SET_POS_SPD) with a trajectory-derived speed feed-forward so the motor
-        # moves at the commanded trajectory speed instead of slamming to each
-        # setpoint at max speed. "pos" is the plain SET_POS behaviour.
-        self.declare_parameter("position_mode", "pos_spd")
+        # POSITION-mode streaming.
+        #  "pos"     (default): plain SET_POS. The driver drives to each streamed
+        #            setpoint with the motor's full physical acceleration, so it
+        #            tracks position accurately at every gait frequency. Pair it
+        #            with a high control_hz so the setpoint stream is fine-grained
+        #            (smooth) rather than a coarse slam-and-wait staircase.
+        #  "pos_spd": SET_POS_SPD with a trajectory-derived speed feed-forward.
+        #            Smooth at low frequency, but the protocol-capped acceleration
+        #            field (~245 rad/s^2 at the AK40-10 output) means the motor
+        #            cannot keep up above ~1-1.5x gait frequency and loses
+        #            positional accuracy there. Prefer "pos" for fast gaits.
+        self.declare_parameter("position_mode", "pos")
         # Acceleration limit (ERPM/s) for pos_spd streaming. Defaults to the
         # protocol maximum so acceleration is not the bottleneck when the gait
         # frequency is increased -- the velocity feed-forward (which scales with
@@ -183,9 +190,9 @@ class MotorNode(Node):
         self.position_mode = str(self.get_parameter("position_mode").value).lower()
         if self.position_mode not in ("pos", "pos_spd"):
             self.get_logger().warn(
-                f"Unknown position_mode '{self.position_mode}'; using 'pos_spd'"
+                f"Unknown position_mode '{self.position_mode}'; using 'pos'"
             )
-            self.position_mode = "pos_spd"
+            self.position_mode = "pos"
         self.pos_spd_accel = float(self.get_parameter("pos_spd_accel").value)
         self.pos_spd_min_speed = float(self.get_parameter("pos_spd_min_speed").value)
 

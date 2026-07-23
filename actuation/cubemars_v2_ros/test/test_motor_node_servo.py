@@ -211,9 +211,28 @@ def test_position_command_emits_degrees(make_node):
     assert deg == pytest.approx(90.0, abs=1e-3)
 
 
-def test_position_mode_defaults_to_pos_spd(make_node):
-    # No position_mode override -> node default should be pos_spd (SET_POS_SPD).
+def test_position_mode_defaults_to_pos(make_node):
+    # No position_mode override -> node default should be plain SET_POS.
     node, mn = make_node(motor_type="AK40-10")
+    assert node.position_mode == "pos"
+    cmd = mn.MotorCommand()
+    cmd.control_mode = mn.MotorCommand.CONTROL_MODE_POSITION
+    cmd.pos_setpoint = 3.141592653589793 / 2
+    node.on_motor_command(cmd)
+    node._tick_control()
+
+    frame = _last_frame(node)
+    pid, _ = sp.parse_status_id(frame.arbitration_id)
+    assert pid == sp.CAN_PACKET_SET_POS
+    assert len(frame.data) == 4
+    deg = struct.unpack(">i", frame.data)[0] / sp.POS_SCALE
+    assert deg == pytest.approx(90.0, abs=1e-3)
+
+
+def test_pos_spd_first_move_uses_min_speed(make_node):
+    # pos_spd first move has no feed-forward history, but the min-speed floor
+    # must still apply so the motor actually travels to the target.
+    node, mn = make_node(motor_type="AK40-10", position_mode="pos_spd")
     assert node.position_mode == "pos_spd"
     cmd = mn.MotorCommand()
     cmd.control_mode = mn.MotorCommand.CONTROL_MODE_POSITION
@@ -227,8 +246,6 @@ def test_position_mode_defaults_to_pos_spd(make_node):
     assert len(frame.data) == 8
     deg = struct.unpack(">i", frame.data[0:4])[0] / sp.POS_SCALE
     assert deg == pytest.approx(90.0, abs=1e-3)
-    # First move has no feed-forward history, but the min-speed floor must still
-    # apply so the motor actually travels to the target.
     speed_erpm = struct.unpack(">h", frame.data[4:6])[0] * sp.POS_SPD_SPEED_SCALE
     assert speed_erpm == pytest.approx(node._min_speed_erpm, abs=sp.POS_SPD_SPEED_SCALE)
 
@@ -237,7 +254,7 @@ def test_pos_spd_static_hold_uses_min_speed(make_node):
     """A held (unchanging) position setpoint -- e.g. the 'stand' pose -- must
     still command a non-zero speed so the motor moves to and holds the target.
     """
-    node, mn = make_node(motor_type="AK40-10", control_hz=100.0)
+    node, mn = make_node(motor_type="AK40-10", control_hz=100.0, position_mode="pos_spd")
     cmd = mn.MotorCommand()
     cmd.control_mode = mn.MotorCommand.CONTROL_MODE_POSITION
     cmd.pos_setpoint = 0.30  # constant stand-like target
@@ -257,7 +274,7 @@ def test_pos_spd_static_hold_uses_min_speed(make_node):
 
 def test_pos_spd_velocity_feedforward(make_node):
     # gear=10, pole_pairs=14, control_hz=100
-    node, mn = make_node(motor_type="AK40-10", control_hz=100.0)
+    node, mn = make_node(motor_type="AK40-10", control_hz=100.0, position_mode="pos_spd")
     cmd = mn.MotorCommand()
     cmd.control_mode = mn.MotorCommand.CONTROL_MODE_POSITION
 
@@ -282,7 +299,7 @@ def test_pos_spd_velocity_feedforward(make_node):
 
 
 def test_pos_spd_speed_never_exceeds_cap(make_node):
-    node, mn = make_node(motor_type="AK40-10", control_hz=100.0)
+    node, mn = make_node(motor_type="AK40-10", control_hz=100.0, position_mode="pos_spd")
     cmd = mn.MotorCommand()
     cmd.control_mode = mn.MotorCommand.CONTROL_MODE_POSITION
     # Huge jump between ticks -> feed-forward would exceed V_MAX; must be capped.

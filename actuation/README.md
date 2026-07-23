@@ -41,7 +41,7 @@ All frames are **CAN 2.0 extended (29-bit)**: `CAN ID = (packet_id << 8) | node_
 
 | MotorCommand mode | Servo packet | Command unit | Conversion from ROS units |
 |-------------------|--------------|--------------|---------------------------|
-| `POSITION` (3) | `SET_POS_SPD` (6) † | output-shaft degrees × 10000 + speed/accel | `deg = rad × 180/π` |
+| `POSITION` (3) | `SET_POS` (4) † | output-shaft degrees × 10000 | `deg = rad × 180/π` |
 | `VELOCITY` (2) | `SET_RPM` (3) | rotor ERPM | `ERPM = rad/s × (60/2π) × gear × pole_pairs` |
 | `TORQUE` (1) | `SET_CURRENT` (1) | phase current × 1000 (mA) | `I = τ / (Kt × gear)` |
 
@@ -49,31 +49,33 @@ The all-stride trajectory path uses **POSITION** mode, whose conversion is a pur
 (no gear factor — servo position is referenced to the output shaft). Velocity and torque modes
 additionally need the gear ratio, pole pairs, and torque constant listed below.
 
-† **Position streaming (`pos_spd` vs `pos`).** By default POSITION mode streams **position-velocity**
-frames (`SET_POS_SPD`, §5.1.7): each setpoint carries a velocity feed-forward derived from the
-change in commanded position over one control period, plus a bounded acceleration. This makes the
-motor move *at the trajectory's speed* rather than approaching every target at the motor's maximum
-speed. Plain `SET_POS` (`position_mode: pos`) slams to each target at max speed with the driver's
-internal loop — fine for slow, narrow gaits (walk) but it rings on wide/fast gaits (swim) because
-there is no velocity/acceleration shaping (the old MIT Kp used to absorb it). The speed feed-forward
-is clamped to the motor's `V_MAX`; the acceleration limit is `pos_spd_accel` (ERPM/s).
+† **Position streaming (`pos` vs `pos_spd`).** POSITION mode has two implementations, chosen with
+the `position_mode` parameter:
 
-A **held** position (a static setpoint such as the `stand` pose) produces zero change between
-ticks, so the feed-forward would be zero — and `SET_POS_SPD` with speed 0 never moves. A minimum
-approach speed (`pos_spd_min_speed`, rad/s) floors the commanded speed so held poses and the first
-move still travel to their target; it only binds when the trajectory is (near-)stationary, so it
-does not affect normal gait fidelity.
+* **`pos` (default) — plain `SET_POS`.** The driver drives to each streamed setpoint using the
+  motor's **full physical acceleration**, so it tracks position accurately at *every* gait
+  frequency. This is the right choice for "trajectories run correctly." Because it is not
+  acceleration-shaped, a *coarse* setpoint stream would move as a slam-and-wait staircase and can
+  ring; the fix is to stream finely — run the node at a high `control_hz` (default **250 Hz**) so
+  the position steps are small and the motion is smooth.
 
-**Frequency scaling and the acceleration ceiling.** When a trajectory is replayed at a higher
-frequency (`run_trajectory ... <freq>`), the position setpoints move faster, so the velocity
-feed-forward scales up with frequency automatically. However, **acceleration** demand scales with
-frequency *squared*, and the `SET_POS_SPD` acceleration field is protocol-capped at
-`pos_spd_accel` ≈ 327670 ERPM/s (~245 rad/s² at the AK40-10 output). Once a gait's acceleration
-demand exceeds that cap the motor can no longer reach the higher commanded speeds, so the movement
-speed **plateaus** even as you raise the frequency — this is a protocol limit of position-velocity
-mode, not a bug. If you need speed beyond that ceiling, set `position_mode: pos` (plain `SET_POS`),
-which uses the motor's full physical acceleration and keeps scaling — at the cost of the
-max-speed slam / ringing that `pos_spd` was added to suppress.
+* **`pos_spd` — `SET_POS_SPD` (§5.1.7)** with a velocity feed-forward derived from the change in
+  commanded position over one control period, plus a bounded acceleration. It is smooth at low
+  frequency, **but** the `SET_POS_SPD` acceleration field is protocol-capped at `pos_spd_accel`
+  ≈ 327670 ERPM/s (~245 rad/s² at the AK40-10 output), and gait acceleration demand grows with
+  frequency *squared*. Above ~1–1.5× the base frequency the demand exceeds that cap, the motor can
+  no longer keep up, and **positional accuracy is lost**. Use `pos_spd` only for slow gaits where
+  smoothness matters more than high-frequency fidelity.
+
+  In `pos_spd`, the speed feed-forward is clamped to the motor's `V_MAX`, and a held/static setpoint
+  (e.g. the `stand` pose) produces zero feed-forward — so a minimum approach speed
+  (`pos_spd_min_speed`, rad/s) floors the commanded speed, letting held poses and the first move
+  still reach their target. It only binds when the trajectory is (near-)stationary.
+
+**Why `control_hz` matters.** The leg stack streams setpoints at 500–1000 Hz (the trajectory point
+rate × frequency). The motor node samples the latest setpoint at `control_hz`; too low a rate both
+coarsens the motion (staircase → ring) and discards trajectory detail. 250 Hz captures the real
+gait motion bandwidth while staying comfortably within the 1 Mbps CAN budget (4 motors per bus).
 
 > **Notation trap:** servo **position** is output-shaft referenced, but servo **speed** is
 > *rotor-electrical* (ERPM). That asymmetry is why velocity conversion carries a `gear × pole_pairs`
@@ -169,10 +171,10 @@ float32 torq_estimate  # Nm
 | `motor_id` / `can_id` | `0` | CAN node ID (0–7) |
 | `motor_type` | `AK40-10` | Motor model string |
 | `interface` / `can_interface` | `can0` | SocketCAN interface name |
-| `control_hz` | `100.0` | Rate at which command frames are sent |
+| `control_hz` | `250.0` | Setpoint stream / command rate. Higher = finer, smoother position streaming |
 | `pole_pairs` | `0` | Rotor pole pairs for ERPM scaling (`0` = per-motor table default) |
 | `gear_ratio` | `0.0` | Gear reduction for ERPM/torque scaling (`0` = per-motor table default) |
-| `position_mode` | `pos_spd` | POSITION streaming: `pos_spd` (velocity feed-forward, smooth) or `pos` (plain SET_POS) |
+| `position_mode` | `pos` | POSITION streaming: `pos` (plain SET_POS, accurate at all freq) or `pos_spd` (feed-forward, smooth but accel-capped) |
 | `pos_spd_accel` | `327670.0` | Acceleration limit (ERPM/s) for `pos_spd` streaming (protocol max) |
 | `pos_spd_min_speed` | `2.0` | Minimum approach speed (rad/s) for `pos_spd`; lets held poses (stand) reach their target |
 | `reverse_polarity` | `false` | Negate position/velocity/torque |
