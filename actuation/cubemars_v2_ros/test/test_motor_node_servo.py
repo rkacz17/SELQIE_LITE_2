@@ -227,8 +227,32 @@ def test_position_mode_defaults_to_pos_spd(make_node):
     assert len(frame.data) == 8
     deg = struct.unpack(">i", frame.data[0:4])[0] / sp.POS_SCALE
     assert deg == pytest.approx(90.0, abs=1e-3)
-    # First move of a run has no history -> zero speed feed-forward.
-    assert struct.unpack(">h", frame.data[4:6])[0] == 0
+    # First move has no feed-forward history, but the min-speed floor must still
+    # apply so the motor actually travels to the target.
+    speed_erpm = struct.unpack(">h", frame.data[4:6])[0] * sp.POS_SPD_SPEED_SCALE
+    assert speed_erpm == pytest.approx(node._min_speed_erpm, abs=sp.POS_SPD_SPEED_SCALE)
+
+
+def test_pos_spd_static_hold_uses_min_speed(make_node):
+    """A held (unchanging) position setpoint -- e.g. the 'stand' pose -- must
+    still command a non-zero speed so the motor moves to and holds the target.
+    """
+    node, mn = make_node(motor_type="AK40-10", control_hz=100.0)
+    cmd = mn.MotorCommand()
+    cmd.control_mode = mn.MotorCommand.CONTROL_MODE_POSITION
+    cmd.pos_setpoint = 0.30  # constant stand-like target
+
+    node.on_motor_command(cmd)
+    node._tick_control()          # first frame (seeds history)
+    node.on_motor_command(cmd)    # identical setpoint again
+    node._tick_control()          # second frame: feed-forward would be 0
+
+    frame = _last_frame(node)
+    pid, _ = sp.parse_status_id(frame.arbitration_id)
+    assert pid == sp.CAN_PACKET_SET_POS_SPD
+    speed_erpm = struct.unpack(">h", frame.data[4:6])[0] * sp.POS_SPD_SPEED_SCALE
+    assert speed_erpm == pytest.approx(node._min_speed_erpm, abs=sp.POS_SPD_SPEED_SCALE)
+    assert speed_erpm > 0
 
 
 def test_pos_spd_velocity_feedforward(make_node):

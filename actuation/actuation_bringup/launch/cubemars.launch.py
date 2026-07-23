@@ -14,6 +14,7 @@ def launch_setup(context, *args, **kwargs):
     gear_ratio = LaunchConfiguration('gear_ratio').perform(context)
     position_mode = LaunchConfiguration('position_mode').perform(context)
     pos_spd_accel = LaunchConfiguration('pos_spd_accel').perform(context)
+    pos_spd_min_speed = LaunchConfiguration('pos_spd_min_speed').perform(context)
     cmd_timeout = LaunchConfiguration('cmd_timeout').perform(context)
     reverse_polarity = LaunchConfiguration('reverse_polarity').perform(context)
 
@@ -36,6 +37,7 @@ def launch_setup(context, *args, **kwargs):
                 'gear_ratio': float(gear_ratio),
                 'position_mode': position_mode,
                 'pos_spd_accel': float(pos_spd_accel),
+                'pos_spd_min_speed': float(pos_spd_min_speed),
                 'cmd_timeout': float(cmd_timeout),
                 'reverse_polarity': reverse_polarity.lower() in ('true', '1', 'yes'),
             }],
@@ -79,6 +81,11 @@ def generate_launch_description():
             'pos_spd_accel',
             default_value='200000.0',
             description='Acceleration limit (ERPM/s) for pos_spd position streaming.',
+        ),
+        DeclareLaunchArgument(
+            'pos_spd_min_speed',
+            default_value='2.0',
+            description='Minimum approach speed (rad/s) for pos_spd so held poses (stand) move.',
         ),
         DeclareLaunchArgument(
             'cmd_timeout',

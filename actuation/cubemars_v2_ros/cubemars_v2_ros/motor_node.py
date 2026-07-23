@@ -151,6 +151,11 @@ class MotorNode(Node):
         # Acceleration limit (ERPM/s) for pos_spd streaming. Clamped to the
         # protocol max (~327670 ERPM/s).
         self.declare_parameter("pos_spd_accel", 200000.0)
+        # Minimum approach speed (rad/s) for pos_spd streaming. A held/static
+        # position setpoint (e.g. the "stand" pose) produces zero position change
+        # between ticks, so the velocity feed-forward is zero; without a floor,
+        # SET_POS_SPD with speed 0 would never move the motor to the target.
+        self.declare_parameter("pos_spd_min_speed", 2.0)
 
         # Get parameters
         self.iface = self.get_parameter("can_interface").value
@@ -176,6 +181,7 @@ class MotorNode(Node):
             )
             self.position_mode = "pos_spd"
         self.pos_spd_accel = float(self.get_parameter("pos_spd_accel").value)
+        self.pos_spd_min_speed = float(self.get_parameter("pos_spd_min_speed").value)
 
         # Servo-unit conversion constants (with per-motor fallbacks).
         pole_pairs = int(self.get_parameter("pole_pairs").value)
@@ -285,6 +291,9 @@ class MotorNode(Node):
         self._last_ff_pos_rad = None
         self._speed_cap_erpm = abs(
             sp.rads_to_erpm(self.R["V_MAX"], self.gear_ratio, self.pole_pairs)
+        )
+        self._min_speed_erpm = abs(
+            sp.rads_to_erpm(self.pos_spd_min_speed, self.gear_ratio, self.pole_pairs)
         )
 
         # Absolute position tracking (unwrapping), in radians at the output shaft.
@@ -508,15 +517,18 @@ class MotorNode(Node):
             pos_rad = -pos_rad
 
         if self._last_ff_pos_rad is None:
-            # First move of a run: no history, so let the driver approach gently.
+            # First move of a run: no history yet, so there is no feed-forward.
             speed_erpm = 0.0
         else:
             vel_rads = (pos_rad - self._last_ff_pos_rad) * self.control_hz
             speed_erpm = abs(
                 sp.rads_to_erpm(vel_rads, self.gear_ratio, self.pole_pairs)
             )
-            speed_erpm = min(speed_erpm, self._speed_cap_erpm)
         self._last_ff_pos_rad = pos_rad
+
+        # Floor the approach speed so a held/static setpoint (e.g. "stand") and
+        # the first move still travel to the target, then cap it at V_MAX.
+        speed_erpm = min(max(speed_erpm, self._min_speed_erpm), self._speed_cap_erpm)
 
         can_id, data = sp.pack_pos_spd(
             self.node_id, sp.rad_to_deg(pos_rad), speed_erpm, self.pos_spd_accel
