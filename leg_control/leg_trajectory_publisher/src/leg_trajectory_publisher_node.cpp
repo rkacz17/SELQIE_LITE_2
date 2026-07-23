@@ -111,22 +111,34 @@ private:
             return;
         }
 
-        // Get the delay for the current leg command in seconds
-        const auto delay = _traj->timing[_idx];
-
-        // Check if the delay greater than the current time
         const auto diff = current_time - _start_time;
-        if (delay > diff)
+
+        // Advance past every command whose scheduled time has already elapsed and
+        // publish only the most recent one. Advancing a single index per timer tick
+        // capped playback at one command per tick (~1 kHz): when a trajectory is
+        // replayed at a higher frequency its timeline is compressed below that, so
+        // the publisher fell behind and the next republish truncated the stride
+        // ("cut short") while the motion speed plateaued. Skipping to the setpoint
+        // due *now* keeps pace with the compressed timeline so speed scales with
+        // frequency. Skipped intermediate setpoints are stale positions the leg is
+        // already moving through, so only the latest is commanded.
+        std::size_t next = _idx;
+        while (next < _traj->timing.size() && _traj->timing[next] <= diff)
         {
-            // If so, return without executing the leg command
-            // Essentially waits until the next leg command is ready to be executed
+            next++;
+        }
+
+        // Nothing new is due yet; wait for the next tick.
+        if (next == _idx)
+        {
             return;
         }
 
-        // Publish the leg command for the current index and increment the index
-        _leg_command_pub->publish(_traj->commands[_idx++]);
+        // Publish the latest command whose time has elapsed.
+        _leg_command_pub->publish(_traj->commands[next - 1]);
+        _idx = next;
 
-        // Check if the index is now greater than the trajectory size
+        // Check if the trajectory has been fully played out
         if (_idx >= _traj->timing.size())
         {
             // If so, deactivate the trajectory publisher
