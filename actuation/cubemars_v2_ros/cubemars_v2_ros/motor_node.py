@@ -143,6 +143,14 @@ class MotorNode(Node):
         self.declare_parameter("pole_pairs", 0)
         self.declare_parameter("gear_ratio", 0.0)
         self.declare_parameter("cmd_timeout", 0.5)  # seconds before a stale cmd is cleared
+        # POSITION-mode streaming: "pos_spd" streams position-velocity frames
+        # (SET_POS_SPD) with a trajectory-derived speed feed-forward so the motor
+        # moves at the commanded trajectory speed instead of slamming to each
+        # setpoint at max speed. "pos" is the plain SET_POS behaviour.
+        self.declare_parameter("position_mode", "pos_spd")
+        # Acceleration limit (ERPM/s) for pos_spd streaming. Clamped to the
+        # protocol max (~327670 ERPM/s).
+        self.declare_parameter("pos_spd_accel", 200000.0)
 
         # Get parameters
         self.iface = self.get_parameter("can_interface").value
@@ -161,6 +169,13 @@ class MotorNode(Node):
         self.auto_start = bool(self.get_parameter("auto_start").value)
         self.reverse_polarity = bool(self.get_parameter("reverse_polarity").value)
         self.cmd_timeout = float(self.get_parameter("cmd_timeout").value)
+        self.position_mode = str(self.get_parameter("position_mode").value).lower()
+        if self.position_mode not in ("pos", "pos_spd"):
+            self.get_logger().warn(
+                f"Unknown position_mode '{self.position_mode}'; using 'pos_spd'"
+            )
+            self.position_mode = "pos_spd"
+        self.pos_spd_accel = float(self.get_parameter("pos_spd_accel").value)
 
         # Servo-unit conversion constants (with per-motor fallbacks).
         pole_pairs = int(self.get_parameter("pole_pairs").value)
@@ -262,6 +277,15 @@ class MotorNode(Node):
         self._started = False  # Whether the motor is enabled
         self._neutral_hold = True  # When True, release torque regardless of cmd cache
         self._last_cmd_time = None  # Monotonic timestamp of last received command
+
+        # Velocity feed-forward state for pos_spd streaming: the last
+        # polarity-applied position (rad) actually commanded, used to derive the
+        # trajectory speed from consecutive setpoints. Reset whenever the motor
+        # stops being driven so the first move after a pause is not a huge step.
+        self._last_ff_pos_rad = None
+        self._speed_cap_erpm = abs(
+            sp.rads_to_erpm(self.R["V_MAX"], self.gear_ratio, self.pole_pairs)
+        )
 
         # Absolute position tracking (unwrapping), in radians at the output shaft.
         self._last_pos_rad = None
@@ -433,9 +457,15 @@ class MotorNode(Node):
         # the un-started state both release torque (zero current), matching the
         # MIT node's "all zeros" behaviour.
         if not self._started or neutral:
+            self._last_ff_pos_rad = None  # next position move restarts the feed-forward
             self._send_current(0.0)
             return
 
+        if mode == MotorCommand.CONTROL_MODE_POSITION and self.position_mode == "pos_spd":
+            self._send_position_velocity(pos)
+            return
+        # Any other mode abandons the position feed-forward history.
+        self._last_ff_pos_rad = None
         if mode == MotorCommand.CONTROL_MODE_POSITION:
             self._send_position(pos)
         elif mode == MotorCommand.CONTROL_MODE_VELOCITY:
@@ -460,10 +490,37 @@ class MotorNode(Node):
             )
 
     def _send_position(self, pos_rad):
-        """Command an output-shaft position (rad)."""
+        """Command an output-shaft position (rad) via plain position mode."""
         if self.reverse_polarity:
             pos_rad = -pos_rad
         can_id, data = sp.pack_pos(self.node_id, sp.rad_to_deg(pos_rad))
+        self._send(can_id, data)
+
+    def _send_position_velocity(self, pos_rad):
+        """Command an output-shaft position (rad) with a velocity feed-forward.
+
+        Streams SET_POS_SPD frames whose speed is derived from the change in the
+        commanded position over one control period, so the motor tracks the
+        trajectory at its own speed instead of slamming to each setpoint at the
+        motor's maximum speed (which rings on wide/fast gaits such as swim).
+        """
+        if self.reverse_polarity:
+            pos_rad = -pos_rad
+
+        if self._last_ff_pos_rad is None:
+            # First move of a run: no history, so let the driver approach gently.
+            speed_erpm = 0.0
+        else:
+            vel_rads = (pos_rad - self._last_ff_pos_rad) * self.control_hz
+            speed_erpm = abs(
+                sp.rads_to_erpm(vel_rads, self.gear_ratio, self.pole_pairs)
+            )
+            speed_erpm = min(speed_erpm, self._speed_cap_erpm)
+        self._last_ff_pos_rad = pos_rad
+
+        can_id, data = sp.pack_pos_spd(
+            self.node_id, sp.rad_to_deg(pos_rad), speed_erpm, self.pos_spd_accel
+        )
         self._send(can_id, data)
 
     def _send_velocity(self, vel_rads):
