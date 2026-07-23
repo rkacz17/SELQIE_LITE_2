@@ -48,6 +48,9 @@ class SELQIETerminal(Cmd):
         """ Ready the Cubemars motors """
         for i in range(self._selqie.NUM_MOTORS):
             self._selqie.set_motor_ready(i)
+        # The ready/stand move is a gentle hold -> use the smooth position-speed
+        # submode. Gaits switch to plain position per their frequency below.
+        self._selqie.set_all_motors_position_mode('pos_spd')
 
     def do_clear_errors(self, line : str):
         """ Clear errors on the Cubemars motors """
@@ -124,6 +127,10 @@ class SELQIETerminal(Cmd):
         except ValueError:
             print("Invalid force values")
 
+    # Gaits at or above this frequency use plain position (SET_POS) for accuracy;
+    # slower gaits use the smooth position-speed submode.
+    POS_SPD_MAX_HZ = 1.0
+
     def do_run_trajectory(self, line : str):
         """ Run a trajectory file or sequence of files """
         args = line.split()
@@ -131,15 +138,21 @@ class SELQIETerminal(Cmd):
             print("Usage: run_trajectory <file1> <num_loops1> <frequency1> <file2> <num_loops2> <frequency2> ...")
             return
         try:
-            for i in range(0, len(args), 3):
-                file = args[i]
-                num_loops = int(args[i+1])
-                frequency = float(args[i+2])
+            for seg in range(0, len(args), 3):
+                file = args[seg]
+                num_loops = int(args[seg+1])
+                frequency = float(args[seg+2])
+                # Slow gaits (<1 Hz) stay in the smooth position-speed submode;
+                # faster gaits switch to plain position so accuracy is not lost to
+                # the SET_POS_SPD acceleration ceiling.
+                mode = 'pos_spd' if frequency < self.POS_SPD_MAX_HZ else 'pos'
+                self._selqie.set_all_motors_position_mode(mode)
+                time.sleep(0.05)  # let the mode change take effect before streaming
                 rate = self._selqie.create_rate(frequency)
                 trajectories = self._selqie.get_leg_trajectories_from_file(file, frequency)
-                print(f"Running trajectory for {num_loops} loops at {frequency} Hz")
-                for i in range(num_loops):
-                    print(f"  Loop {i+1}/{num_loops}")
+                print(f"Running trajectory for {num_loops} loops at {frequency} Hz ({mode})")
+                for loop_idx in range(num_loops):
+                    print(f"  Loop {loop_idx+1}/{num_loops}")
                     self._selqie.run_leg_trajectories(trajectories)
                     rate.sleep()
                 print("Finished trajectory")
@@ -147,6 +160,10 @@ class SELQIETerminal(Cmd):
             print("Invalid number of loops or frequency")
         except FileNotFoundError:
             print("File not found")
+        finally:
+            # Return to the smooth submode for the stand/return-to-ready move that
+            # follows a completed gait.
+            self._selqie.set_all_motors_position_mode('pos_spd')
             
     def complete_run_trajectory(self, text, line, begidx, endidx):
         """ Autocomplete for run_trajectory """
@@ -352,6 +369,8 @@ class SELQIETerminal(Cmd):
 
     def do_stand(self, line : str):
         """ Stand the robot """
+        # Standing is a held pose -> smooth position-speed submode.
+        self._selqie.set_all_motors_position_mode('pos_spd')
         self._selqie.set_control_gait('stand')
         time.sleep(0.1)
         self._selqie.set_control_command_velocity(0.0, 0.0, 0.0)

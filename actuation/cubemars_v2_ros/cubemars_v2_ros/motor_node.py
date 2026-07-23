@@ -143,18 +143,21 @@ class MotorNode(Node):
         self.declare_parameter("pole_pairs", 0)
         self.declare_parameter("gear_ratio", 0.0)
         self.declare_parameter("cmd_timeout", 0.5)  # seconds before a stale cmd is cleared
-        # POSITION-mode streaming.
-        #  "pos"     (default): plain SET_POS. The driver drives to each streamed
-        #            setpoint with the motor's full physical acceleration, so it
-        #            tracks position accurately at every gait frequency. Pair it
-        #            with a high control_hz so the setpoint stream is fine-grained
+        # POSITION-mode streaming. Selectable at runtime via the special commands
+        # "pos" / "pos_spd" (the UI sets pos_spd for slow gaits (<1 Hz) and
+        # stand/ready holds, and pos for faster gaits).
+        #  "pos_spd" (default): SET_POS_SPD with a trajectory-derived speed
+        #            feed-forward. Smooth, and the right choice for the gentle
+        #            stand/ready move and slow gaits. Its acceleration field is
+        #            protocol-capped (~245 rad/s^2 at the AK40-10 output), so
+        #            above ~1-1.5x gait frequency the motor cannot keep up and
+        #            loses positional accuracy.
+        #  "pos":    plain SET_POS. The driver drives to each streamed setpoint
+        #            with the motor's full physical acceleration, so it tracks
+        #            position accurately at every gait frequency. Pair it with a
+        #            high control_hz so the setpoint stream is fine-grained
         #            (smooth) rather than a coarse slam-and-wait staircase.
-        #  "pos_spd": SET_POS_SPD with a trajectory-derived speed feed-forward.
-        #            Smooth at low frequency, but the protocol-capped acceleration
-        #            field (~245 rad/s^2 at the AK40-10 output) means the motor
-        #            cannot keep up above ~1-1.5x gait frequency and loses
-        #            positional accuracy there. Prefer "pos" for fast gaits.
-        self.declare_parameter("position_mode", "pos")
+        self.declare_parameter("position_mode", "pos_spd")
         # Acceleration limit (ERPM/s) for pos_spd streaming. Defaults to the
         # protocol maximum so acceleration is not the bottleneck when the gait
         # frequency is increased -- the velocity feed-forward (which scales with
@@ -190,9 +193,9 @@ class MotorNode(Node):
         self.position_mode = str(self.get_parameter("position_mode").value).lower()
         if self.position_mode not in ("pos", "pos_spd"):
             self.get_logger().warn(
-                f"Unknown position_mode '{self.position_mode}'; using 'pos'"
+                f"Unknown position_mode '{self.position_mode}'; using 'pos_spd'"
             )
-            self.position_mode = "pos"
+            self.position_mode = "pos_spd"
         self.pos_spd_accel = float(self.get_parameter("pos_spd_accel").value)
         self.pos_spd_min_speed = float(self.get_parameter("pos_spd_min_speed").value)
 
@@ -411,8 +414,21 @@ class MotorNode(Node):
             self._last_cmd_time = time.monotonic()
 
     def on_special(self, msg):
-        """Handle a special command string: start | exit | zero | clear."""
+        """Handle a special command: start | exit | zero | clear | pos | pos_spd."""
         m = msg.data.strip().lower()
+
+        if m in ("pos", "pos_spd"):
+            # Switch the POSITION streaming submode at runtime. The UI selects
+            # pos_spd (smooth) for slow gaits (<1 Hz) and stand/ready holds, and
+            # pos (accurate) for faster gaits.
+            if m != self.position_mode:
+                with self._lock:
+                    self.position_mode = m
+                    self._last_ff_pos_rad = None  # restart feed-forward cleanly
+                self.get_logger().info(
+                    f"Position mode -> {m} for motor {self.joint_name}"
+                )
+            return
 
         if m == "start":
             # Enable command output.
@@ -450,7 +466,8 @@ class MotorNode(Node):
 
         else:
             self.get_logger().warn(
-                f"Unknown special command: '{m}'. Valid options: start|exit|zero|clear"
+                f"Unknown special command: '{m}'. "
+                f"Valid options: start|exit|zero|clear|pos|pos_spd"
             )
 
     # ---- Control Loop ----

@@ -211,10 +211,11 @@ def test_position_command_emits_degrees(make_node):
     assert deg == pytest.approx(90.0, abs=1e-3)
 
 
-def test_position_mode_defaults_to_pos(make_node):
-    # No position_mode override -> node default should be plain SET_POS.
+def test_position_mode_defaults_to_pos_spd(make_node):
+    # No position_mode override -> node default is pos_spd (the smooth stand/ready
+    # and slow-gait submode); the UI switches to "pos" for faster gaits.
     node, mn = make_node(motor_type="AK40-10")
-    assert node.position_mode == "pos"
+    assert node.position_mode == "pos_spd"
     cmd = mn.MotorCommand()
     cmd.control_mode = mn.MotorCommand.CONTROL_MODE_POSITION
     cmd.pos_setpoint = 3.141592653589793 / 2
@@ -223,9 +224,9 @@ def test_position_mode_defaults_to_pos(make_node):
 
     frame = _last_frame(node)
     pid, _ = sp.parse_status_id(frame.arbitration_id)
-    assert pid == sp.CAN_PACKET_SET_POS
-    assert len(frame.data) == 4
-    deg = struct.unpack(">i", frame.data)[0] / sp.POS_SCALE
+    assert pid == sp.CAN_PACKET_SET_POS_SPD
+    assert len(frame.data) == 8
+    deg = struct.unpack(">i", frame.data[0:4])[0] / sp.POS_SCALE
     assert deg == pytest.approx(90.0, abs=1e-3)
 
 
@@ -402,6 +403,35 @@ def test_start_then_move(make_node):
 
     pid, _ = sp.parse_status_id(_last_frame(node).arbitration_id)
     assert pid == sp.CAN_PACKET_SET_POS
+
+
+def test_special_switches_position_mode(make_node):
+    # Default is pos_spd; a "pos" special command switches to plain SET_POS,
+    # and "pos_spd" switches back -- exercised the way the UI drives it.
+    node, mn = make_node(motor_type="AK40-10")
+    assert node.position_mode == "pos_spd"
+
+    def _special(data):
+        s = mn.String()
+        s.data = data
+        node.on_special(s)
+
+    _special("pos")
+    assert node.position_mode == "pos"
+    cmd = mn.MotorCommand()
+    cmd.control_mode = mn.MotorCommand.CONTROL_MODE_POSITION
+    cmd.pos_setpoint = 1.0
+    node.on_motor_command(cmd)
+    node._tick_control()
+    pid, _ = sp.parse_status_id(_last_frame(node).arbitration_id)
+    assert pid == sp.CAN_PACKET_SET_POS
+
+    _special("pos_spd")
+    assert node.position_mode == "pos_spd"
+    node.on_motor_command(cmd)
+    node._tick_control()
+    pid, _ = sp.parse_status_id(_last_frame(node).arbitration_id)
+    assert pid == sp.CAN_PACKET_SET_POS_SPD
 
 
 def test_zero_sends_origin(make_node):
